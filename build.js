@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /**
- * Reads .env and writes the values into the extension:
- *   - manifest.json      site URL (matches + host_permissions)
- *   - src/config.js      runtime numbers for the controller
+ * Reads .env and generates the two files Chrome actually loads:
+ *   - manifest.json   from manifest.template.json, with the site URL filled in
+ *   - src/config.js   runtime numbers for the controller
  *
  * Chrome cannot read .env itself, so this runs once per settings change.
+ * Both outputs are gitignored, so committing never overwrites your setup.
  */
 const fs = require('fs');
 const path = require('path');
@@ -90,15 +91,18 @@ function readConfig(envPath) {
 }
 
 function writeManifest(config) {
-  const file = path.join(ROOT, 'manifest.json');
-  const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const template = path.join(ROOT, 'manifest.template.json');
+  if (!fs.existsSync(template)) {
+    throw new Error('manifest.template.json is missing.');
+  }
 
+  const manifest = JSON.parse(fs.readFileSync(template, 'utf8'));
   manifest.host_permissions = [config.SITE_URL];
   for (const script of manifest.content_scripts) {
     script.matches = [config.SITE_URL];
   }
 
-  fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+  fs.writeFileSync(path.join(ROOT, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
 function writeRuntimeConfig(config) {

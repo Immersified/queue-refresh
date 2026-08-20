@@ -7,7 +7,7 @@
     "storage"
   ],
   "host_permissions": [
-    "https://REPLACE-ME.example.com/*"
+    "__SITE_URL__"
   ],
   "action": {
     "default_title": "Queue Refresh",
@@ -16,7 +16,7 @@
   "content_scripts": [
     {
       "matches": [
-        "https://REPLACE-ME.example.com/*"
+        "__SITE_URL__"
       ],
       "js": [
         "src/classify.js",
@@ -27,7 +27,7 @@
     },
     {
       "matches": [
-        "https://REPLACE-ME.example.com/*"
+        "__SITE_URL__"
       ],
       "js": [
         "src/config.js",
