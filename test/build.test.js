@@ -5,7 +5,8 @@ const { parseEnv, validate } = require('../build.js');
 const good = {
   SITE_URL: 'https://app.example.com/*',
   MAX_ATTEMPTS: '200',
-  RETRY_INTERVAL_SECONDS: '10',
+  RETRY_INTERVAL_MIN_SECONDS: '5',
+  RETRY_INTERVAL_MAX_SECONDS: '10',
   RESPONSE_TIMEOUT_SECONDS: '15',
   CLICK_DELAY_SECONDS: '1'
 };
@@ -34,7 +35,8 @@ test('accepts a valid config and converts numbers', () => {
   assert.deepStrictEqual(validate(good), {
     SITE_URL: 'https://app.example.com/*',
     MAX_ATTEMPTS: 200,
-    RETRY_INTERVAL_SECONDS: 10,
+    RETRY_INTERVAL_MIN_SECONDS: 5,
+    RETRY_INTERVAL_MAX_SECONDS: 10,
     RESPONSE_TIMEOUT_SECONDS: 15,
     CLICK_DELAY_SECONDS: 1
   });
@@ -70,14 +72,32 @@ test('rejects a URL without a scheme', () => {
 
 test('rejects non-numeric and zero values', () => {
   assert.throws(() => validate({ ...good, MAX_ATTEMPTS: 'lots' }), /whole number/);
-  assert.throws(() => validate({ ...good, RETRY_INTERVAL_SECONDS: '0' }), /whole number/);
   assert.throws(() => validate({ ...good, RESPONSE_TIMEOUT_SECONDS: '1.5' }), /whole number/);
+});
+
+test('accepts a min equal to the max', () => {
+  const config = validate({ ...good, RETRY_INTERVAL_MIN_SECONDS: '10' });
+  assert.strictEqual(config.RETRY_INTERVAL_MIN_SECONDS, 10);
+});
+
+test('rejects a min larger than the max', () => {
+  assert.throws(
+    () => validate({ ...good, RETRY_INTERVAL_MIN_SECONDS: '20' }),
+    /cannot be larger than/
+  );
+});
+
+test('explains how to migrate the old single-interval key', () => {
+  const old = { ...good };
+  delete old.RETRY_INTERVAL_MIN_SECONDS;
+  old.RETRY_INTERVAL_SECONDS = '10';
+  assert.throws(() => validate(old), /was replaced by/);
 });
 
 test('reports every missing field at once', () => {
   assert.throws(() => validate({}), (error) => {
     assert.match(error.message, /SITE_URL is missing/);
-    assert.match(error.message, /RESPONSE_TIMEOUT_SECONDS is missing/);
+    assert.match(error.message, /RETRY_INTERVAL_MAX_SECONDS is missing/);
     return true;
   });
 });

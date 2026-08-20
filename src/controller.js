@@ -16,7 +16,8 @@
     throw new Error('[Queue Refresh] src/config.js is missing. Run: node build.js');
   }
 
-  const RETRY_DELAY_MS = settings.retryDelayMs;
+  const RETRY_DELAY_MIN_MS = settings.retryDelayMinMs;
+  const RETRY_DELAY_MAX_MS = settings.retryDelayMaxMs;
   const RESPONSE_TIMEOUT_MS = settings.responseTimeoutMs;
   const MAX_ATTEMPTS = settings.maxAttempts;
   const CLICK_DELAY_MS = settings.clickDelayMs;
@@ -37,6 +38,10 @@
   }
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  // A random wait per retry, so the requests do not land on a fixed rhythm.
+  const nextRetryDelay = () =>
+    RETRY_DELAY_MIN_MS + Math.random() * (RETRY_DELAY_MAX_MS - RETRY_DELAY_MIN_MS);
 
   function findJoinButton() {
     return Array.from(document.querySelectorAll('button')).find(
@@ -104,10 +109,11 @@
     const { status, message } = await result;
 
     if (status === 'full') {
-      setStatus(`Attempt ${attempt}: queue full. Refreshing in ${RETRY_DELAY_MS / 1000}s.`);
+      const wait = nextRetryDelay();
+      setStatus(`Attempt ${attempt}: queue full. Refreshing in ${(wait / 1000).toFixed(1)}s.`);
       setTimeout(() => {
         if (isActive()) location.reload();
-      }, RETRY_DELAY_MS);
+      }, wait);
       return;
     }
 

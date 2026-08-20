@@ -10,7 +10,7 @@ No third-party tools. Chrome loads it directly.
 1. Waits `CLICK_DELAY_SECONDS` for the page to settle.
 2. Finds the button whose text is exactly `Join queue` and clicks it.
 3. Watches the GraphQL response for the `joinTaskQueue` operation.
-4. Queue full -> waits 10 seconds, reloads the page, clicks again.
+4. Queue full -> waits a random 5 to 10 seconds, reloads, clicks again.
 5. Anything else (joined, other error, no response) -> stops.
 
 ## Setup (about 10 minutes)
@@ -21,7 +21,8 @@ your site URL, then adjust the numbers if you want:
 ```
 SITE_URL=https://app.yoursite.com/*
 MAX_ATTEMPTS=200
-RETRY_INTERVAL_SECONDS=10
+RETRY_INTERVAL_MIN_SECONDS=5
+RETRY_INTERVAL_MAX_SECONDS=10
 RESPONSE_TIMEOUT_SECONDS=15
 CLICK_DELAY_SECONDS=1
 ```
@@ -58,7 +59,8 @@ All in `.env`. Run `node build.js` to apply.
 | --- | --- | --- |
 | `SITE_URL` | none | Page with the button. `/*` is added if you leave it off |
 | `MAX_ATTEMPTS` | `200` | Safety limit on clicks |
-| `RETRY_INTERVAL_SECONDS` | `10` | Wait after "queue is full" before reloading |
+| `RETRY_INTERVAL_MIN_SECONDS` | `5` | Shortest wait after "queue is full" |
+| `RETRY_INTERVAL_MAX_SECONDS` | `10` | Longest wait. Each retry picks a random time in between |
 | `RESPONSE_TIMEOUT_SECONDS` | `15` | Give up if the server stays silent |
 | `CLICK_DELAY_SECONDS` | `1` | Settle time after the page loads, before clicking. Decimals allowed, `0` disables |
 
