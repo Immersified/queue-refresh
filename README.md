@@ -14,32 +14,53 @@ No third-party tools. Chrome loads it directly.
 
 ## Setup (about 10 minutes)
 
-**1. Point it at your site.** Open `manifest.json` and replace
-`https://REPLACE-ME.example.com/*` in **both** places with your site, for example
-`https://app.yoursite.com/*`.
+**1. Put your settings in `.env`.** The file is already there. Open it and fill in
+your site URL, then adjust the numbers if you want:
 
-**2. Load it in Chrome.**
+```
+SITE_URL=https://app.yoursite.com/*
+MAX_ATTEMPTS=200
+RETRY_INTERVAL_SECONDS=10
+RESPONSE_TIMEOUT_SECONDS=15
+```
+
+**2. Apply them.**
+
+```
+node build.js
+```
+
+Chrome cannot read `.env` itself, so this copies the values into `manifest.json`
+and `src/config.js`. Run it again after every `.env` change.
+
+**3. Load it in Chrome.**
 - Go to `chrome://extensions`
 - Turn on **Developer mode** (top right)
 - Click **Load unpacked** and pick this folder
 
-**3. Use it.** Open the queue page, click the extension icon, press **Start**.
+**4. Use it.** Open the queue page, click the extension icon, press **Start**.
 The popup shows the current status. Press **Stop** any time, or just close the tab.
 
-After editing any file, hit the reload arrow on the extension card, then reload
-the page.
+After any `.env` change: `node build.js`, then the reload arrow on the extension
+card, then reload the page.
 
 ## Settings
 
-Constants at the top of `src/controller.js`:
+All in `.env`. Run `node build.js` to apply.
 
 | Name | Default | Meaning |
 | --- | --- | --- |
-| `BUTTON_LABEL` | `Join queue` | Exact button text to look for |
-| `RETRY_DELAY_MS` | `10000` | Wait before reloading |
-| `MAX_ATTEMPTS` | `200` | Safety limit |
-| `RESPONSE_TIMEOUT_MS` | `15000` | Give up waiting for the server |
-| `BUTTON_TIMEOUT_MS` | `30000` | Give up waiting for the button |
+| `SITE_URL` | none | Page with the button. `/*` is added if you leave it off |
+| `MAX_ATTEMPTS` | `200` | Safety limit on clicks |
+| `RETRY_INTERVAL_SECONDS` | `10` | Wait after "queue is full" before reloading |
+| `RESPONSE_TIMEOUT_SECONDS` | `15` | Give up if the server stays silent |
+
+`build.js` refuses to run on a bad value and tells you which one, so a typo cannot
+quietly turn into a broken extension.
+
+Two things stay in the code because they rarely need changing: the button text
+(`BUTTON_LABEL`) and how long to wait for the button to appear
+(`BUTTON_TIMEOUT_MS`), both at the top of `src/controller.js`.
 
 ## Why it finds the button by text
 
@@ -51,7 +72,11 @@ stable handle, so no manual setup is needed.
 
 | File | Role |
 | --- | --- |
-| `manifest.json` | Extension config and the site URL |
+| `.env` | Your settings. Not committed |
+| `.env.example` | Template with the defaults |
+| `build.js` | Writes `.env` values into the extension |
+| `manifest.json` | Extension config. Site URL filled in by `build.js` |
+| `src/config.js` | Generated numbers. Do not edit by hand |
 | `src/classify.js` | Reads a GraphQL body, decides full / joined / error |
 | `src/interceptor.js` | Wraps `fetch` and `XMLHttpRequest` in the page |
 | `src/controller.js` | One attempt per page load, plus the retry loop |

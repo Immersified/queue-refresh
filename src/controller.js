@@ -10,11 +10,18 @@
   const KEY_ACTIVE = 'queueRefresh.active';
   const KEY_ATTEMPTS = 'queueRefresh.attempts';
 
-  const RETRY_DELAY_MS = 10000;
+  // Set in .env, written into src/config.js by build.js.
+  const settings = globalThis.QUEUE_REFRESH_CONFIG;
+  if (!settings) {
+    throw new Error('[Queue Refresh] src/config.js is missing. Run: node build.js');
+  }
+
+  const RETRY_DELAY_MS = settings.retryDelayMs;
+  const RESPONSE_TIMEOUT_MS = settings.responseTimeoutMs;
+  const MAX_ATTEMPTS = settings.maxAttempts;
+
   const BUTTON_TIMEOUT_MS = 30000;
-  const RESPONSE_TIMEOUT_MS = 15000;
   const POLL_INTERVAL_MS = 250;
-  const MAX_ATTEMPTS = 200;
 
   const isActive = () => sessionStorage.getItem(KEY_ACTIVE) === '1';
 
@@ -79,7 +86,7 @@
     setStatus(`Attempt ${attempt}: looking for the "${BUTTON_LABEL}" button.`);
     const button = await waitForButton();
     if (!button) {
-      return stop(`Stopped: no enabled "${BUTTON_LABEL}" button after 30s.`);
+      return stop(`Stopped: no enabled "${BUTTON_LABEL}" button after ${BUTTON_TIMEOUT_MS / 1000}s.`);
     }
 
     const result = waitForResult();
@@ -88,7 +95,7 @@
     const { status, message } = await result;
 
     if (status === 'full') {
-      setStatus(`Attempt ${attempt}: queue full. Refreshing in 10s.`);
+      setStatus(`Attempt ${attempt}: queue full. Refreshing in ${RETRY_DELAY_MS / 1000}s.`);
       setTimeout(() => {
         if (isActive()) location.reload();
       }, RETRY_DELAY_MS);
@@ -97,7 +104,9 @@
 
     const detail = message ? ` ${message}` : '';
     if (status === 'joined') return stop(`Joined the queue on attempt ${attempt}.`);
-    if (status === 'timeout') return stop(`Stopped: no joinTaskQueue response within 15s.`);
+    if (status === 'timeout') {
+      return stop(`Stopped: no joinTaskQueue response within ${RESPONSE_TIMEOUT_MS / 1000}s.`);
+    }
     return stop(`Stopped on attempt ${attempt}:${detail}`);
   }
 

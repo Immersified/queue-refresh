@@ -3,22 +3,36 @@
   "name": "Queue Refresh",
   "version": "1.0.0",
   "description": "Retries the Join queue button for as long as the task queue reports it is full.",
-  "permissions": ["storage"],
-  "host_permissions": ["https://REPLACE-ME.example.com/*"],
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://REPLACE-ME.example.com/*"
+  ],
   "action": {
     "default_title": "Queue Refresh",
     "default_popup": "src/popup.html"
   },
   "content_scripts": [
     {
-      "matches": ["https://REPLACE-ME.example.com/*"],
-      "js": ["src/classify.js", "src/interceptor.js"],
+      "matches": [
+        "https://REPLACE-ME.example.com/*"
+      ],
+      "js": [
+        "src/classify.js",
+        "src/interceptor.js"
+      ],
       "run_at": "document_start",
       "world": "MAIN"
     },
     {
-      "matches": ["https://REPLACE-ME.example.com/*"],
-      "js": ["src/controller.js"],
+      "matches": [
+        "https://REPLACE-ME.example.com/*"
+      ],
+      "js": [
+        "src/config.js",
+        "src/controller.js"
+      ],
       "run_at": "document_idle",
       "world": "ISOLATED"
     }
