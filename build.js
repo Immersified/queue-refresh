@@ -15,7 +15,8 @@ const FIELDS = [
   { key: 'SITE_URL', type: 'url' },
   { key: 'MAX_ATTEMPTS', type: 'count' },
   { key: 'RETRY_INTERVAL_SECONDS', type: 'count' },
-  { key: 'RESPONSE_TIMEOUT_SECONDS', type: 'count' }
+  { key: 'RESPONSE_TIMEOUT_SECONDS', type: 'count' },
+  { key: 'CLICK_DELAY_SECONDS', type: 'delay' }
 ];
 
 function parseEnv(text) {
@@ -58,6 +59,16 @@ function validate(values) {
     }
 
     const number = Number(value);
+
+    if (type === 'delay') {
+      if (!Number.isFinite(number) || number < 0) {
+        problems.push(`${key} must be 0 or more (got "${value}").`);
+      } else {
+        config[key] = number;
+      }
+      continue;
+    }
+
     if (!Number.isInteger(number) || number < 1) {
       problems.push(`${key} must be a whole number of at least 1 (got "${value}").`);
     } else {
@@ -95,7 +106,8 @@ function writeRuntimeConfig(config) {
 globalThis.QUEUE_REFRESH_CONFIG = {
   maxAttempts: ${config.MAX_ATTEMPTS},
   retryDelayMs: ${config.RETRY_INTERVAL_SECONDS * 1000},
-  responseTimeoutMs: ${config.RESPONSE_TIMEOUT_SECONDS * 1000}
+  responseTimeoutMs: ${config.RESPONSE_TIMEOUT_SECONDS * 1000},
+  clickDelayMs: ${Math.round(config.CLICK_DELAY_SECONDS * 1000)}
 };
 `;
   fs.writeFileSync(path.join(ROOT, 'src', 'config.js'), body);
@@ -111,6 +123,7 @@ function main() {
   console.log(`  max attempts      ${config.MAX_ATTEMPTS}`);
   console.log(`  retry interval    ${config.RETRY_INTERVAL_SECONDS}s`);
   console.log(`  response timeout  ${config.RESPONSE_TIMEOUT_SECONDS}s`);
+  console.log(`  click delay       ${config.CLICK_DELAY_SECONDS}s`);
   console.log('\nNow press the reload arrow on the extension in chrome://extensions.');
 }
 

@@ -19,6 +19,7 @@
   const RETRY_DELAY_MS = settings.retryDelayMs;
   const RESPONSE_TIMEOUT_MS = settings.responseTimeoutMs;
   const MAX_ATTEMPTS = settings.maxAttempts;
+  const CLICK_DELAY_MS = settings.clickDelayMs;
 
   const BUTTON_TIMEOUT_MS = 30000;
   const POLL_INTERVAL_MS = 250;
@@ -34,6 +35,8 @@
     sessionStorage.setItem(KEY_ACTIVE, '0');
     setStatus(text);
   }
+
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   function findJoinButton() {
     return Array.from(document.querySelectorAll('button')).find(
@@ -81,6 +84,12 @@
 
     if (attempt > MAX_ATTEMPTS) {
       return stop(`Stopped: hit the ${MAX_ATTEMPTS} attempt limit.`);
+    }
+
+    if (CLICK_DELAY_MS > 0) {
+      setStatus(`Attempt ${attempt}: letting the page settle for ${CLICK_DELAY_MS / 1000}s.`);
+      await sleep(CLICK_DELAY_MS);
+      if (!isActive()) return;
     }
 
     setStatus(`Attempt ${attempt}: looking for the "${BUTTON_LABEL}" button.`);

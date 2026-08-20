@@ -6,7 +6,8 @@ const good = {
   SITE_URL: 'https://app.example.com/*',
   MAX_ATTEMPTS: '200',
   RETRY_INTERVAL_SECONDS: '10',
-  RESPONSE_TIMEOUT_SECONDS: '15'
+  RESPONSE_TIMEOUT_SECONDS: '15',
+  CLICK_DELAY_SECONDS: '1'
 };
 
 test('parses keys, skipping comments and blank lines', () => {
@@ -34,8 +35,21 @@ test('accepts a valid config and converts numbers', () => {
     SITE_URL: 'https://app.example.com/*',
     MAX_ATTEMPTS: 200,
     RETRY_INTERVAL_SECONDS: 10,
-    RESPONSE_TIMEOUT_SECONDS: 15
+    RESPONSE_TIMEOUT_SECONDS: 15,
+    CLICK_DELAY_SECONDS: 1
   });
+});
+
+test('accepts a fractional click delay', () => {
+  assert.strictEqual(validate({ ...good, CLICK_DELAY_SECONDS: '0.5' }).CLICK_DELAY_SECONDS, 0.5);
+});
+
+test('accepts a click delay of zero', () => {
+  assert.strictEqual(validate({ ...good, CLICK_DELAY_SECONDS: '0' }).CLICK_DELAY_SECONDS, 0);
+});
+
+test('rejects a negative click delay', () => {
+  assert.throws(() => validate({ ...good, CLICK_DELAY_SECONDS: '-1' }), /0 or more/);
 });
 
 test('appends the /* match suffix when it is missing', () => {

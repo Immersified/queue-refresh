@@ -7,10 +7,11 @@ No third-party tools. Chrome loads it directly.
 
 ## What it does
 
-1. Finds the button whose text is exactly `Join queue` and clicks it.
-2. Watches the GraphQL response for the `joinTaskQueue` operation.
-3. Queue full -> waits 10 seconds, reloads the page, clicks again.
-4. Anything else (joined, other error, no response) -> stops.
+1. Waits `CLICK_DELAY_SECONDS` for the page to settle.
+2. Finds the button whose text is exactly `Join queue` and clicks it.
+3. Watches the GraphQL response for the `joinTaskQueue` operation.
+4. Queue full -> waits 10 seconds, reloads the page, clicks again.
+5. Anything else (joined, other error, no response) -> stops.
 
 ## Setup (about 10 minutes)
 
@@ -22,6 +23,7 @@ SITE_URL=https://app.yoursite.com/*
 MAX_ATTEMPTS=200
 RETRY_INTERVAL_SECONDS=10
 RESPONSE_TIMEOUT_SECONDS=15
+CLICK_DELAY_SECONDS=1
 ```
 
 **2. Apply them.**
@@ -54,6 +56,7 @@ All in `.env`. Run `node build.js` to apply.
 | `MAX_ATTEMPTS` | `200` | Safety limit on clicks |
 | `RETRY_INTERVAL_SECONDS` | `10` | Wait after "queue is full" before reloading |
 | `RESPONSE_TIMEOUT_SECONDS` | `15` | Give up if the server stays silent |
+| `CLICK_DELAY_SECONDS` | `1` | Settle time after the page loads, before clicking. Decimals allowed, `0` disables |
 
 `build.js` refuses to run on a bad value and tells you which one, so a typo cannot
 quietly turn into a broken extension.

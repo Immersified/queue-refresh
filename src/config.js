@@ -2,5 +2,6 @@
 globalThis.QUEUE_REFRESH_CONFIG = {
   maxAttempts: 200,
   retryDelayMs: 10000,
-  responseTimeoutMs: 15000
+  responseTimeoutMs: 15000,
+  clickDelayMs: 1000
 };
