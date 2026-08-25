@@ -59,6 +59,37 @@ test('appends the /* match suffix when it is missing', () => {
   assert.strictEqual(config.SITE_URL, 'https://app.example.com/*');
 });
 
+test('reduces a full campaign link to a host-wide pattern', () => {
+  const config = validate({
+    ...good,
+    SITE_URL: 'https://app.example.com/campaigns/abc-123?tab=tasks#top'
+  });
+  assert.strictEqual(config.SITE_URL, 'https://app.example.com/*');
+});
+
+test('drops a port, which match patterns cannot carry', () => {
+  const config = validate({ ...good, SITE_URL: 'https://app.example.com:8443/queues/9' });
+  assert.strictEqual(config.SITE_URL, 'https://app.example.com/*');
+});
+
+test('keeps a subdomain wildcard host', () => {
+  const config = validate({ ...good, SITE_URL: 'https://*.example.com/*' });
+  assert.strictEqual(config.SITE_URL, 'https://*.example.com/*');
+});
+
+test('keeps http as-is rather than forcing https', () => {
+  const config = validate({ ...good, SITE_URL: 'http://localhost/queues/1' });
+  assert.strictEqual(config.SITE_URL, 'http://localhost/*');
+});
+
+test('every link on one host produces the same pattern', () => {
+  const pattern = (url) => validate({ ...good, SITE_URL: url }).SITE_URL;
+  assert.strictEqual(
+    pattern('https://app.example.com/campaigns/one'),
+    pattern('https://app.example.com/campaigns/two')
+  );
+});
+
 test('rejects the untouched placeholder', () => {
   assert.throws(
     () => validate({ ...good, SITE_URL: 'https://REPLACE-ME.example.com/*' }),

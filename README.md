@@ -15,11 +15,11 @@ No third-party tools. Chrome loads it directly.
 
 ## Setup (about 10 minutes)
 
-**1. Put your settings in `.env`.** The file is already there. Open it and fill in
-your site URL, then adjust the numbers if you want:
+**1. Put your settings in `.env`.** The file is already there. Open it and paste any
+page of your site into `SITE_URL`, then adjust the numbers if you want:
 
 ```
-SITE_URL=https://app.yoursite.com/*
+SITE_URL=https://app.yoursite.com/campaigns/abc-123
 MAX_ATTEMPTS=200
 RETRY_INTERVAL_MIN_SECONDS=5
 RETRY_INTERVAL_MAX_SECONDS=10
@@ -37,6 +37,11 @@ Chrome cannot read `.env` itself, so this generates `manifest.json` (from
 `manifest.template.json`) and `src/config.js`. Run it again after every `.env`
 change.
 
+Only the domain of `SITE_URL` reaches the extension: the path, query and port are
+dropped, so `https://app.yoursite.com/campaigns/abc-123` and any other link on that
+host both become `https://app.yoursite.com/*`. When a campaign link changes, the
+generated files come out identical, so there is nothing to rebuild or reload.
+
 `.env`, `manifest.json` and `src/config.js` are all gitignored, so pulling or
 committing never overwrites your settings. Edit `.env`, never the generated files.
 
@@ -49,7 +54,8 @@ committing never overwrites your settings. Edit `.env`, never the generated file
 The popup shows the current status. Press **Stop** any time, or just close the tab.
 
 After any `.env` change: `node build.js`, then the reload arrow on the extension
-card, then reload the page.
+card, then reload the page. Changing which campaign you use is not an `.env` change
+— open the new link and press Start.
 
 ## Settings
 
@@ -57,7 +63,7 @@ All in `.env`. Run `node build.js` to apply.
 
 | Name | Default | Meaning |
 | --- | --- | --- |
-| `SITE_URL` | none | Page with the button. `/*` is added if you leave it off |
+| `SITE_URL` | none | Any page on the site with the button. Only the domain is used, so campaign links can change without a rebuild |
 | `MAX_ATTEMPTS` | `200` | Safety limit on clicks |
 | `RETRY_INTERVAL_MIN_SECONDS` | `5` | Shortest wait after "queue is full" |
 | `RETRY_INTERVAL_MAX_SECONDS` | `10` | Longest wait. Each retry picks a random time in between |
@@ -95,7 +101,7 @@ stable handle, so no manual setup is needed.
 ## Tests
 
 ```
-node --test test/
+node --test
 ```
 
 No dependencies.

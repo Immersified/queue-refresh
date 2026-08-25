@@ -37,6 +37,24 @@ function parseEnv(text) {
   return values;
 }
 
+/**
+ * Turns any page URL into a host-wide match pattern, so a link that changes
+ * path (a new campaign) never needs a rebuild. The path, query and port are
+ * dropped: match patterns cannot carry a port, and matching the whole host is
+ * the point.
+ *   https://app.site.com/campaigns/abc?tab=tasks -> https://app.site.com/*
+ */
+function toMatchPattern(value) {
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch (e) {
+    return null;
+  }
+  if (!parsed.hostname) return null;
+  return `${parsed.protocol}//${parsed.hostname}/*`;
+}
+
 function validate(values) {
   const problems = [];
   const config = {};
@@ -62,7 +80,12 @@ function validate(values) {
       } else if (value.includes('REPLACE-ME')) {
         problems.push(`${key} is still the placeholder. Put your real site URL in .env.`);
       } else {
-        config[key] = value.endsWith('*') ? value : `${value.replace(/\/$/, '')}/*`;
+        const pattern = toMatchPattern(value);
+        if (!pattern) {
+          problems.push(`${key} is not a URL I can read (got "${value}").`);
+        } else {
+          config[key] = pattern;
+        }
       }
       continue;
     }
@@ -160,4 +183,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { parseEnv, validate, readConfig };
+module.exports = { parseEnv, validate, readConfig, toMatchPattern };
