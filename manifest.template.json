@@ -31,6 +31,7 @@
       ],
       "js": [
         "src/config.js",
+        "src/queue-count.js",
         "src/controller.js"
       ],
       "run_at": "document_idle",

@@ -25,6 +25,10 @@
   const BUTTON_TIMEOUT_MS = 30000;
   const POLL_INTERVAL_MS = 250;
 
+  // The count is rendered by the app, so it arrives after the script does.
+  const COUNT_TIMEOUT_MS = 20000;
+  const COUNT_POLL_INTERVAL_MS = 500;
+
   const isActive = () => sessionStorage.getItem(KEY_ACTIVE) === '1';
 
   function setStatus(text) {
@@ -60,6 +64,33 @@
       };
       poll();
     });
+  }
+
+  /**
+   * Reads the queue length off the page. Display only for now: nothing in the
+   * join loop depends on it.
+   */
+  function readCount() {
+    const text = document.body ? document.body.innerText : '';
+    return globalThis.__queueRefreshReadCount(text);
+  }
+
+  function reportCount(count) {
+    if (count === null) return null;
+    chrome.storage.local.set({ queueCount: count, queueCountAt: Date.now() });
+    return count;
+  }
+
+  // Keep looking until the app has rendered the count, then stop. A page
+  // without one (any other page on the site) simply times out and goes quiet.
+  function watchCount() {
+    const deadline = Date.now() + COUNT_TIMEOUT_MS;
+    const poll = () => {
+      if (reportCount(readCount()) !== null) return;
+      if (Date.now() >= deadline) return;
+      setTimeout(poll, COUNT_POLL_INTERVAL_MS);
+    };
+    poll();
   }
 
   function waitForResult() {
@@ -134,10 +165,14 @@
     if (message.type === 'stop') {
       stop('Stopped by you.');
     }
+    if (message.type === 'read-count') {
+      reportCount(readCount());
+    }
     sendResponse({ active: isActive() });
     return false;
   });
 
   // Resume automatically after the reload we triggered ourselves.
   runAttempt();
+  watchCount();
 })();
