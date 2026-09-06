@@ -187,7 +187,22 @@ Press **Test shot** to trigger a capture immediately. Common answers:
 | --- | --- |
 | `the queue tab is not the visible tab in its window` | Bring the tab to the front. Capture only ever sees the visible tab |
 | `No session running` | Press **Start** or **Log only** first |
-| Anything mentioning permission or access | Send me the wording; it is a manifest fix |
+| `Either the '<all_urls>' or 'activeTab' permission is required` | You are on an old build. `git pull`, `node build.js`, reload the extension |
+
+### Why the extension asks for all sites
+
+`chrome.tabs.captureVisibleTab` refuses to run on a host permission alone. It
+accepts only `<all_urls>` or `activeTab`, and `activeTab` is revoked on every
+navigation, so the retry loop's own reloads would kill it within seconds.
+
+`<all_urls>` therefore sits in `host_permissions`, and Edge will say the
+extension can read all your data on all websites. What limits it in practice is
+`content_scripts.matches`, which stays pinned to your `SITE_URL`: the extension
+is only ever *injected* on the queue site. Nothing runs anywhere else.
+
+If that trade is not one you want, say so. Dropping screenshots and saving the
+page's queue text instead needs no extra permission at all, and the CSV, which
+is what the formula actually reads, is unaffected either way.
 
 For the full picture, open `edge://extensions`, click **service worker** on the
 extension card, and read its Console. Every save and every failure is logged

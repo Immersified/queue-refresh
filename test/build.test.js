@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { parseEnv, validate } = require('../build.js');
+const { parseEnv, validate, fillTemplate } = require('../build.js');
 
 const good = {
   SITE_URL: 'https://app.example.com/*',
@@ -151,4 +151,42 @@ test('accepts a screenshot interval equal to the logging tick', () => {
 
 test('refuses a logging interval of zero, which would spin', () => {
   assert.throws(() => validate({ ...good, LOG_INTERVAL_SECONDS: '0' }), /LOG_INTERVAL_SECONDS/);
+});
+
+test('fills the site slot in both host permissions and matches', () => {
+  const manifest = fillTemplate(
+    {
+      host_permissions: ['__SITE_URL__'],
+      content_scripts: [{ matches: ['__SITE_URL__'] }, { matches: ['__SITE_URL__'] }]
+    },
+    'https://app.example.com/*'
+  );
+  assert.deepStrictEqual(manifest.host_permissions, ['https://app.example.com/*']);
+  assert.deepStrictEqual(
+    manifest.content_scripts.map((s) => s.matches),
+    [['https://app.example.com/*'], ['https://app.example.com/*']]
+  );
+});
+
+test('keeps <all_urls>, which screenshots need, alongside the site pattern', () => {
+  const manifest = fillTemplate(
+    { host_permissions: ['__SITE_URL__', '<all_urls>'], content_scripts: [] },
+    'https://app.example.com/*'
+  );
+  assert.deepStrictEqual(manifest.host_permissions, [
+    'https://app.example.com/*',
+    '<all_urls>'
+  ]);
+});
+
+test('never widens where content scripts are injected', () => {
+  const manifest = fillTemplate(
+    {
+      host_permissions: ['__SITE_URL__', '<all_urls>'],
+      content_scripts: [{ matches: ['__SITE_URL__'] }]
+    },
+    'https://app.example.com/*'
+  );
+  assert.deepStrictEqual(manifest.content_scripts[0].matches, ['https://app.example.com/*']);
+  assert.ok(!manifest.content_scripts[0].matches.includes('<all_urls>'));
 });

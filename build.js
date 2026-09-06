@@ -141,18 +141,28 @@ function readConfig(envPath) {
   return validate(parseEnv(fs.readFileSync(envPath, 'utf8')));
 }
 
+/**
+ * Swaps the __SITE_URL__ slot for the real pattern, in place. Anything else in
+ * those lists is left alone, which is how "<all_urls>" survives: screenshots
+ * need it, and it must not be overwritten by the site pattern.
+ */
+function fillTemplate(manifest, siteUrl) {
+  const swap = (entry) => (entry === '__SITE_URL__' ? siteUrl : entry);
+
+  manifest.host_permissions = manifest.host_permissions.map(swap);
+  for (const script of manifest.content_scripts) {
+    script.matches = script.matches.map(swap);
+  }
+  return manifest;
+}
+
 function writeManifest(config) {
   const template = path.join(ROOT, 'manifest.template.json');
   if (!fs.existsSync(template)) {
     throw new Error('manifest.template.json is missing.');
   }
 
-  const manifest = JSON.parse(fs.readFileSync(template, 'utf8'));
-  manifest.host_permissions = [config.SITE_URL];
-  for (const script of manifest.content_scripts) {
-    script.matches = [config.SITE_URL];
-  }
-
+  const manifest = fillTemplate(JSON.parse(fs.readFileSync(template, 'utf8')), config.SITE_URL);
   fs.writeFileSync(path.join(ROOT, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
@@ -199,4 +209,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { parseEnv, validate, readConfig, toMatchPattern };
+module.exports = { parseEnv, validate, readConfig, toMatchPattern, fillTemplate };

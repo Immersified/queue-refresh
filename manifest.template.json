@@ -8,7 +8,8 @@
     "downloads"
   ],
   "host_permissions": [
-    "__SITE_URL__"
+    "__SITE_URL__",
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "src/worker.js"
