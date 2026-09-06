@@ -54,12 +54,12 @@ committing never overwrites your settings. Edit `.env`, never the generated file
 
 | Button | What it does |
 | --- | --- |
-| **Start** | Retries the Join queue button, and logs from the first attempt |
+| **Start** | Retries the Join queue button. Logging begins when the join lands |
 | **Log only** | Logs without touching the button, for when you joined by hand |
 | **Stop** | Ends both the retry loop and the logging |
 | **Stop logging** | Ends the logging only, leaving the retry loop alone |
 | **Test shot** | Takes a screenshot right now, so you can prove capture works without waiting for the interval |
-| **Arm** | Joins and starts logging when the clock reaches the time you picked |
+| **Arm** | Joins when the clock reaches the time you picked, then logs once through |
 | **Disarm** | Cancels it |
 
 The popup shows the status, your position (or the queue length before you join),
@@ -114,8 +114,20 @@ Nothing in the join loop acts on either number; they are recorded, not obeyed.
 ## Logging
 
 To work out *when* to join, you first need data on how fast the queue moves.
-Press **Start** (or **Log only**, if you joined by hand) and the extension
-records the climb.
+
+**A session starts the moment there is a position to record**, not when you
+press a button. That means:
+
+| Moment | Logging |
+| --- | --- |
+| **Start** pressed, retry loop running | No. There is no position yet, only a button being clicked |
+| The join lands | **Starts here** |
+| The schedule fires and you were already in | **Starts here** |
+| **Log only** pressed | **Starts here**, for when you joined by hand |
+
+Rows from the retry loop would carry no position at all, so they are not
+written. The folder appears when you are through, and its timestamp is the
+moment you got in.
 
 Each session gets its own folder, so sessions stay comparable:
 

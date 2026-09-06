@@ -122,7 +122,8 @@
     // Checked every attempt, not just at the start: a reload can land on a
     // page where we are already through, and clicking again would be wrong.
     if (alreadyInQueue()) {
-      return stop('Already in the queue. Not joining again; still logging.');
+      logger.start();
+      return stop('Already in the queue. Not joining again; logging.');
     }
 
     const attempt = Number(sessionStorage.getItem(KEY_ATTEMPTS) || '0') + 1;
@@ -160,7 +161,9 @@
 
     const detail = message ? ` ${message}` : '';
     if (status === 'joined') {
-      return stop(`Joined the queue on attempt ${attempt}. Still logging.`);
+      // The only reason to log is a position to log. That starts here.
+      logger.start();
+      return stop(`Joined the queue on attempt ${attempt}. Logging now.`);
     }
     if (status === 'timeout') {
       return stop(`Stopped: no joinTaskQueue response within ${RESPONSE_TIMEOUT_MS / 1000}s.`);
@@ -191,11 +194,9 @@
     await chrome.storage.local.set({ scheduleArmed: false });
     stopScheduleTick();
 
-    // Logging starts either way: being already in the queue is still a night
-    // of position data, and that is what we are here to collect.
-    logger.start();
-
     if (alreadyInQueue()) {
+      // Already through, so there is a queue position to record right now.
+      logger.start();
       setScheduleStatus('Fired, but you were already in the queue. Join skipped.');
       setStatus('Already in the queue. Not joining; logging instead.');
       return;
@@ -263,7 +264,6 @@
     if (message.type === 'start') {
       sessionStorage.setItem(KEY_ACTIVE, '1');
       sessionStorage.setItem(KEY_ATTEMPTS, '0');
-      logger.start();
       runAttempt();
     }
     if (message.type === 'log-only') {

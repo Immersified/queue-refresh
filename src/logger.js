@@ -12,6 +12,10 @@
  *
  * Session state lives in chrome.storage.local, so the reloads the join loop
  * triggers do not restart the session or lose rows.
+ *
+ * A session begins only once there is a queue position to record: on a
+ * successful join, or on finding we were already in. Logging the climb is the
+ * point, and rows from the retry loop carry no position at all.
  */
 (function () {
   const settings = globalThis.QUEUE_REFRESH_CONFIG;
@@ -99,7 +103,18 @@
     timer = null;
   }
 
+  /**
+   * Begins a session, or picks up the one already running.
+   *
+   * The callers are the moments we find ourselves in the queue, and several of
+   * them repeat: the in-queue guard runs on every page load. Starting a fresh
+   * session there would mint a new folder and throw away the rows collected so
+   * far, so an active session is joined rather than replaced.
+   */
   async function start() {
+    const { logActive } = await chrome.storage.local.get('logActive');
+    if (logActive) return run();
+
     await ask({ type: 'log-start', url: location.href });
     run();
   }
