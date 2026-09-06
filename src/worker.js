@@ -11,9 +11,13 @@
  * The worker is killed whenever it goes idle, so no state is kept in memory:
  * every handler reads and writes chrome.storage.local.
  */
-importScripts('/src/csv.js');
+importScripts('/src/csv.js', '/src/config.js', '/src/telegram.js');
 
 const { toCsv, sessionFolder } = globalThis.__queueRefreshCsv;
+const { formatUpdate } = globalThis.__queueRefreshTelegram;
+
+// null when .env carries no token, which is how Telegram stays optional.
+const TELEGRAM = (globalThis.QUEUE_REFRESH_CONFIG || {}).telegram || null;
 
 const ROOT = 'queue-refresh';
 
@@ -51,9 +55,13 @@ async function startSession(url) {
     logShots: 0,
     logStartedAt: Date.now(),
     logLastShotAt: 0,
-    logShotStatus: 'No screenshot yet.'
+    logShotStatus: 'No screenshot yet.',
+    telegramAt: 0,
+    telegramPosition: null
   });
   await setStatus(`Logging to ${ROOT}/${folder}/`);
+  // Worth a buzz: it means the join landed.
+  await notify(`Queue Refresh\nIn the queue. Logging to ${folder}`, { silent: false });
   return folder;
 }
 
@@ -87,6 +95,7 @@ async function addSample(sample) {
 
   await chrome.storage.local.set({ logRows: rows });
   await writeCsv();
+  await maybeNotify(sample, store.logStartedAt);
 
   const where = sample.position !== null ? `position ${sample.position}` : sample.state;
   await setStatus(`${rows.length} rows logged, latest: ${where}.`);
@@ -146,6 +155,61 @@ async function stopSession() {
   ]);
   await chrome.storage.local.set({ logActive: false });
   await setStatus(`Session finished: ${logRows.length} rows in ${ROOT}/${logSession}/`);
+  await notify(`Queue Refresh\nSession finished. ${logRows.length} rows logged.`, {
+    silent: false
+  });
+}
+
+// ------------------------------------------------------------------ telegram
+
+/**
+ * Fire and forget. A phone notification is never worth breaking a night of
+ * logging over, so every failure is caught and parked in the popup instead.
+ *
+ * @param {boolean} silent routine position updates arrive without a buzz;
+ *   joining, stopping and failing are worth waking the phone for.
+ */
+async function notify(text, { silent = true } = {}) {
+  if (!TELEGRAM) return;
+
+  try {
+    const response = await fetch(
+      `https://api.telegram.org/bot${TELEGRAM.token}/sendMessage`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: TELEGRAM.chatId,
+          text,
+          disable_notification: silent
+        })
+      }
+    );
+
+    if (!response.ok) {
+      // Telegram explains itself well; pass its own words through.
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.description || `HTTP ${response.status}`);
+    }
+    await chrome.storage.local.set({ logTelegramStatus: `sent ${new Date().toLocaleTimeString()}` });
+  } catch (error) {
+    await chrome.storage.local.set({ logTelegramStatus: `FAILED: ${error.message}` });
+  }
+}
+
+/** Rides the CSV tick, but on its own interval so the phone is not spammed. */
+async function maybeNotify(sample, startedAt) {
+  if (!TELEGRAM) return;
+
+  const store = await chrome.storage.local.get(['telegramAt', 'telegramPosition']);
+  const last = store.telegramAt || 0;
+  if (Date.now() - last < TELEGRAM.intervalMs) return;
+
+  await chrome.storage.local.set({
+    telegramAt: Date.now(),
+    telegramPosition: sample.position
+  });
+  await notify(formatUpdate(sample, store.telegramPosition ?? null, Date.now() - startedAt));
 }
 
 // ------------------------------------------------------------------ schedule

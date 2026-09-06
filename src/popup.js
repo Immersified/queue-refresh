@@ -2,6 +2,7 @@ const statusEl = document.getElementById('status');
 const queueEl = document.getElementById('queue');
 const logEl = document.getElementById('log');
 const shotsEl = document.getElementById('shots');
+const telegramEl = document.getElementById('telegram');
 const whenEl = document.getElementById('when');
 const countdownEl = document.getElementById('countdown');
 const { formatCountdown } = globalThis.__queueRefreshSchedule;
@@ -66,6 +67,12 @@ function renderLog({ logActive, logStatus, logSession, logShotStatus }) {
   shotsEl.classList.toggle('failed', shots.startsWith('FAILED'));
 }
 
+function renderTelegram({ logTelegramStatus }) {
+  const text = logTelegramStatus || '';
+  telegramEl.textContent = text ? `Telegram: ${text}` : '';
+  telegramEl.classList.toggle('failed', text.startsWith('FAILED'));
+}
+
 function renderSchedule({ scheduleArmed, scheduleAt, scheduleStatus }) {
   const armed = Boolean(scheduleArmed && scheduleAt);
   countdownEl.classList.toggle('armed', armed);
@@ -115,6 +122,7 @@ const KEYS = [
   'logStatus',
   'logSession',
   'logShotStatus',
+  'logTelegramStatus',
   'scheduleArmed',
   'scheduleAt',
   'scheduleStatus',
@@ -129,6 +137,7 @@ function refresh() {
     render(stored.status);
     renderQueue(stored);
     renderLog(stored);
+    renderTelegram(stored);
     renderSchedule(stored);
     if (stored.scheduleInput && !whenEl.value) whenEl.value = stored.scheduleInput;
   });

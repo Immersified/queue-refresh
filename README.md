@@ -83,6 +83,9 @@ All in `.env`. Run `node build.js` to apply.
 | `CLICK_DELAY_SECONDS` | `1` | Settle time after the page loads, before clicking. Decimals allowed, `0` disables |
 | `LOG_INTERVAL_SECONDS` | `30` | How often a row is written to `log.csv`. This is the resolution of your position data |
 | `SCREENSHOT_INTERVAL_SECONDS` | `1800` | How often a screenshot is saved. Cannot be smaller than `LOG_INTERVAL_SECONDS` |
+| `TELEGRAM_BOT_TOKEN` | blank | From @BotFather. Blank turns Telegram off |
+| `TELEGRAM_CHAT_ID` | blank | From @userinfobot. Negative for a group |
+| `TELEGRAM_INTERVAL_SECONDS` | `300` | How often a position is pushed to your phone |
 
 `build.js` refuses to run on a bad value and tells you which one, so a typo cannot
 quietly turn into a broken extension.
@@ -171,6 +174,74 @@ quality 85 the position line is still perfectly readable.
 **Joining does not stop the logging.** That is deliberate: the climb from
 position 412 to position 1 is the data the formula needs. Press **Stop** to end
 the session.
+
+## Telegram
+
+Optional. With a token in `.env`, the position is pushed to your phone on the
+same tick that writes a CSV row, on its own interval.
+
+```
+Queue Refresh
+Position 412 of 456
+Up 44 since the last update
+Elapsed 1h 04m
+```
+
+Routine updates arrive **silently**, so an overnight run does not buzz a
+hundred times. Three things are worth waking the phone for and are sent loud:
+joining the queue, the session finishing, and a failure.
+
+### Setting it up
+
+**1. Make the bot.** In Telegram, message [@BotFather](https://t.me/BotFather):
+
+```
+/newbot
+```
+
+It asks for a name, then a username ending in `bot`. It replies with a token
+like `8123456789:AAE-abcdefGHIJklmnoPQRstuvWXyz123456`.
+
+**2. Get your chat id.** Message [@userinfobot](https://t.me/userinfobot) and it
+replies with your numeric id. For a group, add the bot to the group first; group
+ids are negative.
+
+**3. Send your bot a message.** Any message, once. A bot cannot start a
+conversation, so it can only reach you after you have spoken to it first. Skip
+this and every send fails with `chat not found`.
+
+**4. Put both in `.env`.**
+
+```
+TELEGRAM_BOT_TOKEN=8123456789:AAE-abcdefGHIJklmnoPQRstuvWXyz123456
+TELEGRAM_CHAT_ID=123456789
+TELEGRAM_INTERVAL_SECONDS=300
+```
+
+```
+node build.js
+```
+
+Leave both blank to turn it off. Set only one and `build.js` stops: a token with
+nowhere to send is a silent no-op you would not notice until morning.
+
+The token is written into `src/config.js`, which is gitignored, and `build.js`
+never prints it. It is still readable by anyone who can read the extension
+folder, so treat it as you would any credential on that machine. If it leaks,
+`/revoke` in BotFather.
+
+### When Telegram fails
+
+The popup carries the last send result, red when it failed. Telegram's own
+wording is passed through:
+
+| Message | Cause |
+| --- | --- |
+| `chat not found` | You have not messaged the bot yet, or the chat id is wrong |
+| `Unauthorized` | The token is wrong or was revoked |
+| `Forbidden: bot was blocked by the user` | You blocked it |
+
+A failure never interrupts logging. The CSV and screenshots carry on.
 
 ## Scheduled start
 
@@ -293,6 +364,7 @@ stable handle, so no manual setup is needed.
 | `src/queue-position.js` | Reads the "Position 412 of 456" line off the page |
 | `src/csv.js` | Builds the CSV text and names each session folder |
 | `src/schedule.js` | Reads the picked time and counts down to it |
+| `src/telegram.js` | Builds the text that goes to your phone |
 | `src/interceptor.js` | Wraps `fetch` and `XMLHttpRequest` in the page |
 | `src/controller.js` | One attempt per page load, plus the retry loop |
 | `src/logger.js` | The logging clock, in the page so it survives reloads |

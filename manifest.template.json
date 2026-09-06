@@ -10,7 +10,8 @@
   ],
   "host_permissions": [
     "__SITE_URL__",
-    "<all_urls>"
+    "<all_urls>",
+    "https://api.telegram.org/*"
   ],
   "background": {
     "service_worker": "src/worker.js"
