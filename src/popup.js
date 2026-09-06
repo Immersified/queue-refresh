@@ -1,5 +1,6 @@
 const statusEl = document.getElementById('status');
 const queueEl = document.getElementById('queue');
+const logEl = document.getElementById('log');
 
 function render(text) {
   statusEl.textContent = text || 'Idle.';
@@ -15,16 +16,23 @@ function describeAge(ms) {
 
 // The reading is shown with its age, so a value left over from an earlier page
 // is never mistaken for what the queue says right now.
-function renderQueue({ queueCount, queueCountAt }) {
-  if (typeof queueCount !== 'number') {
-    queueEl.textContent = 'Queue length: not shown on this page.';
+function renderQueue(stored) {
+  const { queuePosition, queueTotal, queueCount, queueCountAt, queueState } = stored;
+
+  let body = null;
+  if (queueState === 'in-queue' && typeof queuePosition === 'number') {
+    body = [`Position `, bold(String(queuePosition)), ` of ${queueTotal}`];
+  } else if (typeof queueCount === 'number') {
+    const people = queueCount === 1 ? 'expert' : 'experts';
+    body = ['Queue length: ', bold(String(queueCount)), ` ${people} waiting`];
+  }
+
+  if (!body) {
+    queueEl.textContent = 'Queue: not shown on this page.';
     return;
   }
-  const people = queueCount === 1 ? 'expert' : 'experts';
-  const count = document.createElement('b');
-  count.textContent = String(queueCount);
 
-  queueEl.replaceChildren('Queue length: ', count, ` ${people} waiting`);
+  queueEl.replaceChildren(...body);
 
   if (queueCountAt) {
     const age = document.createElement('span');
@@ -32,6 +40,20 @@ function renderQueue({ queueCount, queueCountAt }) {
     age.textContent = ` (read ${describeAge(Date.now() - queueCountAt)})`;
     queueEl.append(age);
   }
+}
+
+function bold(text) {
+  const el = document.createElement('b');
+  el.textContent = text;
+  return el;
+}
+
+function renderLog({ logActive, logStatus, logSession }) {
+  if (!logActive) {
+    logEl.textContent = logStatus || 'Not logging.';
+    return;
+  }
+  logEl.textContent = `${logStatus || 'Logging…'}\nFolder: queue-refresh/${logSession}/`;
 }
 
 async function send(type, { quiet = false } = {}) {
@@ -50,18 +72,30 @@ async function send(type, { quiet = false } = {}) {
 
 document.getElementById('start').addEventListener('click', () => send('start'));
 document.getElementById('stop').addEventListener('click', () => send('stop'));
+document.getElementById('log-only').addEventListener('click', () => send('log-only'));
 
-chrome.storage.local.get(['status', 'queueCount', 'queueCountAt']).then((stored) => {
-  render(stored.status);
-  renderQueue(stored);
-});
+const KEYS = [
+  'status',
+  'queueCount',
+  'queueCountAt',
+  'queuePosition',
+  'queueTotal',
+  'queueState',
+  'logActive',
+  'logStatus',
+  'logSession'
+];
 
-chrome.storage.onChanged.addListener((changes) => {
-  if (changes.status) render(changes.status.newValue);
-  if (changes.queueCount || changes.queueCountAt) {
-    chrome.storage.local.get(['queueCount', 'queueCountAt']).then(renderQueue);
-  }
-});
+function refresh() {
+  chrome.storage.local.get(KEYS).then((stored) => {
+    render(stored.status);
+    renderQueue(stored);
+    renderLog(stored);
+  });
+}
+
+refresh();
+chrome.storage.onChanged.addListener(refresh);
 
 // Ask the page for a reading taken now, rather than trusting what is stored.
 send('read-count', { quiet: true });

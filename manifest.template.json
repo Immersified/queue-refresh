@@ -2,13 +2,17 @@
   "manifest_version": 3,
   "name": "Queue Refresh",
   "version": "1.0.0",
-  "description": "Retries the Join queue button for as long as the task queue reports it is full.",
+  "description": "Retries the Join queue button for as long as the task queue reports it is full, and logs queue position over time.",
   "permissions": [
-    "storage"
+    "storage",
+    "downloads"
   ],
   "host_permissions": [
     "__SITE_URL__"
   ],
+  "background": {
+    "service_worker": "src/worker.js"
+  },
   "action": {
     "default_title": "Queue Refresh",
     "default_popup": "src/popup.html"
@@ -32,6 +36,8 @@
       "js": [
         "src/config.js",
         "src/queue-count.js",
+        "src/queue-position.js",
+        "src/logger.js",
         "src/controller.js"
       ],
       "run_at": "document_idle",

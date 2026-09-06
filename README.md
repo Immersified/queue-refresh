@@ -50,9 +50,16 @@ committing never overwrites your settings. Edit `.env`, never the generated file
 - Turn on **Developer mode** (top right)
 - Click **Load unpacked** and pick this folder
 
-**4. Use it.** Open the queue page, click the extension icon, press **Start**.
-The popup shows the current status and how many experts the page says are waiting.
-Press **Stop** any time, or just close the tab.
+**4. Use it.** Open the queue page, click the extension icon, then:
+
+| Button | What it does |
+| --- | --- |
+| **Start** | Retries the Join queue button, and logs from the first attempt |
+| **Log only** | Logs without touching the button, for when you joined by hand |
+| **Stop** | Ends both |
+
+The popup shows the status, your position (or the queue length before you join),
+and the folder the current session is writing to.
 
 After any `.env` change: `node build.js`, then the reload arrow on the extension
 card, then reload the page. Changing which campaign you use is not an `.env` change
@@ -70,6 +77,8 @@ All in `.env`. Run `node build.js` to apply.
 | `RETRY_INTERVAL_MAX_SECONDS` | `10` | Longest wait. Each retry picks a random time in between |
 | `RESPONSE_TIMEOUT_SECONDS` | `15` | Give up if the server stays silent |
 | `CLICK_DELAY_SECONDS` | `1` | Settle time after the page loads, before clicking. Decimals allowed, `0` disables |
+| `LOG_INTERVAL_SECONDS` | `30` | How often a row is written to `log.csv`. This is the resolution of your position data |
+| `SCREENSHOT_INTERVAL_SECONDS` | `1800` | How often a screenshot is saved. Cannot be smaller than `LOG_INTERVAL_SECONDS` |
 
 `build.js` refuses to run on a bad value and tells you which one, so a typo cannot
 quietly turn into a broken extension.
@@ -78,18 +87,85 @@ Two things stay in the code because they rarely need changing: the button text
 (`BUTTON_LABEL`) and how long to wait for the button to appear
 (`BUTTON_TIMEOUT_MS`), both at the top of `src/controller.js`.
 
-## Queue length
+## Queue length and position
 
-The popup shows what the page says under the Join queue button, as in
-"442 experts currently waiting". The reading is taken when the page loads and
-again whenever the popup is opened, and is shown with its age so a value left
-over from an earlier page cannot be mistaken for the queue right now.
+The page says two different things depending on where you stand:
 
-Nothing acts on the number yet; it is there to be read.
+| Screen | Line on the page | What it means |
+| --- | --- | --- |
+| Before joining | `442 experts currently waiting` | How long the queue is |
+| After joining | `Position 412 of 456` | Where **you** are in it |
 
-A count that is missing, malformed, or absurdly large counts as no reading at
-all, and the last good value stays on screen rather than being replaced by a
-guess.
+The popup shows whichever applies. Readings are taken when the page loads, when
+the popup is opened, and on every logging tick, and each is shown with its age
+so a value left over from an earlier page cannot be mistaken for the queue right
+now.
+
+A reading that is missing, malformed, or impossible (position past the end of
+the queue, a decimal, an absurd total) counts as no reading at all, and the last
+good value stays on screen rather than being replaced by a guess.
+
+Nothing in the join loop acts on either number; they are recorded, not obeyed.
+
+## Logging
+
+To work out *when* to join, you first need data on how fast the queue moves.
+Press **Start** (or **Log only**, if you joined by hand) and the extension
+records the climb.
+
+Each session gets its own folder, so sessions stay comparable:
+
+```
+Downloads/queue-refresh/2026-09-06_1916_e27f8b7b/
+  log.csv
+  shot-0001_191632.png
+  shot-0002_194632.png
+```
+
+The folder name is the start time plus the campaign id, so folders sort in the
+order they happened.
+
+`log.csv` has one row per tick:
+
+| Column | Meaning |
+| --- | --- |
+| `timestamp` | ISO time of the reading |
+| `elapsed_seconds` | Seconds since the session started |
+| `position` | Your place in line, blank before you join |
+| `total` | Queue length as reported next to your position |
+| `waiting` | The "N experts currently waiting" count, blank once you join |
+| `state` | `in-queue`, `not-joined`, or `unknown` |
+| `url` | The page the reading came from |
+
+Two separate `.env` settings control the cadence, because a CSV row is cheap and
+a screenshot is not:
+
+```
+LOG_INTERVAL_SECONDS=30
+SCREENSHOT_INTERVAL_SECONDS=1800
+```
+
+Screenshots are the ground truth. If the page wording ever changes and the CSV
+goes blank, the images still show what actually happened.
+
+**Joining does not stop the logging.** That is deliberate: the climb from
+position 412 to position 1 is the data the formula needs. Press **Stop** to end
+the session.
+
+### Where the files go, and why
+
+Everything lands under the browser's **Downloads** folder. An extension cannot
+write anywhere else without a native messaging host, which would mean a helper
+program and registry entries. This is the whole reason for the `queue-refresh/`
+subfolder.
+
+Before an unattended run, turn **off** `edge://settings/downloads` -> "Ask me
+what to do with each download", or every screenshot will sit waiting on a
+prompt.
+
+Screenshots capture the **visible area of the active tab**. If the queue tab is
+minimised or behind another tab, the capture fails and says so in the popup
+rather than silently writing nothing.
 
 ## Why it finds the button by text
 
@@ -109,9 +185,13 @@ stable handle, so no manual setup is needed.
 | `src/config.js` | Generated by `build.js`. Not committed |
 | `src/classify.js` | Reads a GraphQL body, decides full / joined / error |
 | `src/queue-count.js` | Reads the "N experts currently waiting" line off the page |
+| `src/queue-position.js` | Reads the "Position 412 of 456" line off the page |
+| `src/csv.js` | Builds the CSV text and names each session folder |
 | `src/interceptor.js` | Wraps `fetch` and `XMLHttpRequest` in the page |
 | `src/controller.js` | One attempt per page load, plus the retry loop |
-| `src/popup.js` | Start / Stop buttons and status |
+| `src/logger.js` | The logging clock, in the page so it survives reloads |
+| `src/worker.js` | Service worker: screenshots and file writing |
+| `src/popup.js` | Buttons, status, position and session folder |
 
 ## Tests
 

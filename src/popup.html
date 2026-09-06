@@ -2,17 +2,20 @@
 <meta charset="utf-8">
 <title>Queue Refresh</title>
 <style>
-  body { font: 13px system-ui, sans-serif; width: 240px; margin: 0; padding: 12px; }
+  body { font: 13px system-ui, sans-serif; width: 260px; margin: 0; padding: 12px; }
   h1 { font-size: 13px; margin: 0 0 10px; }
-  button { font: inherit; padding: 6px 12px; margin-right: 6px; cursor: pointer; }
-  #status { margin-top: 12px; color: #444; line-height: 1.4; min-height: 2.6em; }
+  button { font: inherit; padding: 6px 10px; margin: 0 6px 6px 0; cursor: pointer; }
+  #status { margin-top: 8px; color: #444; line-height: 1.4; min-height: 2.6em; }
   #queue { margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd; color: #444; }
   #queue b { font-weight: 600; }
   #queue .age { color: #888; }
+  #log { margin-top: 8px; padding-top: 8px; border-top: 1px solid #ddd; color: #666; line-height: 1.4; }
 </style>
 <h1>Queue Refresh</h1>
 <button id="start">Start</button>
 <button id="stop">Stop</button>
+<button id="log-only">Log only</button>
 <div id="status">Idle.</div>
-<div id="queue">Queue length: reading…</div>
+<div id="queue">Queue: reading…</div>
+<div id="log">Not logging.</div>
 <script src="popup.js"></script>

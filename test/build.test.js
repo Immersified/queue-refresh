@@ -8,7 +8,9 @@ const good = {
   RETRY_INTERVAL_MIN_SECONDS: '5',
   RETRY_INTERVAL_MAX_SECONDS: '10',
   RESPONSE_TIMEOUT_SECONDS: '15',
-  CLICK_DELAY_SECONDS: '1'
+  CLICK_DELAY_SECONDS: '1',
+  LOG_INTERVAL_SECONDS: '30',
+  SCREENSHOT_INTERVAL_SECONDS: '1800'
 };
 
 test('parses keys, skipping comments and blank lines', () => {
@@ -38,6 +40,8 @@ test('accepts a valid config and converts numbers', () => {
     RETRY_INTERVAL_MIN_SECONDS: 5,
     RETRY_INTERVAL_MAX_SECONDS: 10,
     RESPONSE_TIMEOUT_SECONDS: 15,
+    LOG_INTERVAL_SECONDS: 30,
+    SCREENSHOT_INTERVAL_SECONDS: 1800,
     CLICK_DELAY_SECONDS: 1
   });
 });
@@ -131,4 +135,20 @@ test('reports every missing field at once', () => {
     assert.match(error.message, /RETRY_INTERVAL_MAX_SECONDS is missing/);
     return true;
   });
+});
+
+test('refuses a screenshot interval faster than the logging tick', () => {
+  assert.throws(
+    () => validate({ ...good, LOG_INTERVAL_SECONDS: '60', SCREENSHOT_INTERVAL_SECONDS: '30' }),
+    /SCREENSHOT_INTERVAL_SECONDS \(30\) cannot be smaller than LOG_INTERVAL_SECONDS \(60\)/
+  );
+});
+
+test('accepts a screenshot interval equal to the logging tick', () => {
+  const config = validate({ ...good, LOG_INTERVAL_SECONDS: '30', SCREENSHOT_INTERVAL_SECONDS: '30' });
+  assert.strictEqual(config.SCREENSHOT_INTERVAL_SECONDS, 30);
+});
+
+test('refuses a logging interval of zero, which would spin', () => {
+  assert.throws(() => validate({ ...good, LOG_INTERVAL_SECONDS: '0' }), /LOG_INTERVAL_SECONDS/);
 });

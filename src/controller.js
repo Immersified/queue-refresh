@@ -66,27 +66,16 @@
     });
   }
 
-  /**
-   * Reads the queue length off the page. Display only for now: nothing in the
-   * join loop depends on it.
-   */
-  function readCount() {
-    const text = document.body ? document.body.innerText : '';
-    return globalThis.__queueRefreshReadCount(text);
-  }
+  const logger = globalThis.__queueRefreshLogger;
 
-  function reportCount(count) {
-    if (count === null) return null;
-    chrome.storage.local.set({ queueCount: count, queueCountAt: Date.now() });
-    return count;
-  }
-
-  // Keep looking until the app has rendered the count, then stop. A page
+  // Keep looking until the app has rendered the queue line, then stop. A page
   // without one (any other page on the site) simply times out and goes quiet.
+  // Only for the popup's benefit: once a logging session runs, its own tick
+  // takes over and nothing in the join loop depends on either number.
   function watchCount() {
     const deadline = Date.now() + COUNT_TIMEOUT_MS;
     const poll = () => {
-      if (reportCount(readCount()) !== null) return;
+      if (logger.sampleNow().state !== 'unknown') return;
       if (Date.now() >= deadline) return;
       setTimeout(poll, COUNT_POLL_INTERVAL_MS);
     };
@@ -149,7 +138,9 @@
     }
 
     const detail = message ? ` ${message}` : '';
-    if (status === 'joined') return stop(`Joined the queue on attempt ${attempt}.`);
+    if (status === 'joined') {
+      return stop(`Joined the queue on attempt ${attempt}. Still logging.`);
+    }
     if (status === 'timeout') {
       return stop(`Stopped: no joinTaskQueue response within ${RESPONSE_TIMEOUT_MS / 1000}s.`);
     }
@@ -160,13 +151,20 @@
     if (message.type === 'start') {
       sessionStorage.setItem(KEY_ACTIVE, '1');
       sessionStorage.setItem(KEY_ATTEMPTS, '0');
+      logger.start();
       runAttempt();
     }
+    if (message.type === 'log-only') {
+      // Already in the queue by hand: gather data without touching the button.
+      logger.start();
+      setStatus('Logging only. The join button is not being touched.');
+    }
     if (message.type === 'stop') {
+      logger.stop();
       stop('Stopped by you.');
     }
     if (message.type === 'read-count') {
-      reportCount(readCount());
+      logger.sampleNow();
     }
     sendResponse({ active: isActive() });
     return false;

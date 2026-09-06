@@ -18,7 +18,9 @@ const FIELDS = [
   { key: 'RETRY_INTERVAL_MIN_SECONDS', type: 'delay' },
   { key: 'RETRY_INTERVAL_MAX_SECONDS', type: 'delay' },
   { key: 'RESPONSE_TIMEOUT_SECONDS', type: 'count' },
-  { key: 'CLICK_DELAY_SECONDS', type: 'delay' }
+  { key: 'CLICK_DELAY_SECONDS', type: 'delay' },
+  { key: 'LOG_INTERVAL_SECONDS', type: 'count' },
+  { key: 'SCREENSHOT_INTERVAL_SECONDS', type: 'count' }
 ];
 
 function parseEnv(text) {
@@ -116,6 +118,16 @@ function validate(values) {
     );
   }
 
+  const { LOG_INTERVAL_SECONDS: log, SCREENSHOT_INTERVAL_SECONDS: shot } = config;
+  // The screenshot check rides on the logging tick, so it can never be the
+  // faster of the two.
+  if (log !== undefined && shot !== undefined && shot < log) {
+    problems.push(
+      `SCREENSHOT_INTERVAL_SECONDS (${shot}) cannot be smaller than ` +
+      `LOG_INTERVAL_SECONDS (${log}).`
+    );
+  }
+
   if (problems.length) {
     throw new Error(`Problems in .env:\n  - ${problems.join('\n  - ')}`);
   }
@@ -151,7 +163,9 @@ globalThis.QUEUE_REFRESH_CONFIG = {
   retryDelayMinMs: ${Math.round(config.RETRY_INTERVAL_MIN_SECONDS * 1000)},
   retryDelayMaxMs: ${Math.round(config.RETRY_INTERVAL_MAX_SECONDS * 1000)},
   responseTimeoutMs: ${config.RESPONSE_TIMEOUT_SECONDS * 1000},
-  clickDelayMs: ${Math.round(config.CLICK_DELAY_SECONDS * 1000)}
+  clickDelayMs: ${Math.round(config.CLICK_DELAY_SECONDS * 1000)},
+  logIntervalMs: ${config.LOG_INTERVAL_SECONDS * 1000},
+  screenshotIntervalMs: ${config.SCREENSHOT_INTERVAL_SECONDS * 1000}
 };
 `;
   fs.writeFileSync(path.join(ROOT, 'src', 'config.js'), body);
@@ -171,6 +185,8 @@ function main() {
   );
   console.log(`  response timeout  ${config.RESPONSE_TIMEOUT_SECONDS}s`);
   console.log(`  click delay       ${config.CLICK_DELAY_SECONDS}s`);
+  console.log(`  csv row every     ${config.LOG_INTERVAL_SECONDS}s`);
+  console.log(`  screenshot every  ${config.SCREENSHOT_INTERVAL_SECONDS}s`);
   console.log('\nNow press the reload arrow on the extension in chrome://extensions.');
 }
 
