@@ -59,6 +59,8 @@ committing never overwrites your settings. Edit `.env`, never the generated file
 | **Stop** | Ends both the retry loop and the logging |
 | **Stop logging** | Ends the logging only, leaving the retry loop alone |
 | **Test shot** | Takes a screenshot right now, so you can prove capture works without waiting for the interval |
+| **Arm** | Joins and starts logging when the clock reaches the time you picked |
+| **Disarm** | Cancels it |
 
 The popup shows the status, your position (or the queue length before you join),
 and the folder the current session is writing to.
@@ -158,6 +160,56 @@ quality 85 the position line is still perfectly readable.
 position 412 to position 1 is the data the formula needs. Press **Stop** to end
 the session.
 
+## Scheduled start
+
+Temporary, for collecting data. Pick a time in the popup, press **Arm**, and
+leave the queue page open. When the machine's clock reaches it, the extension
+joins and starts logging.
+
+```
+Join at  [ 07/09/2026 06:03 ]
+[ Arm ] [ Disarm ]
+Joining in 8h 42m (7/09/2026, 06:03:00)
+```
+
+The time is **local wall-clock time on that machine** — the clock in the corner
+of the server's screen. No timezone is attached, so what you type is what fires.
+
+It lives in the popup rather than `.env` on purpose: you will change it nightly,
+and `.env` would mean `node build.js`, an extension reload and a page reload
+every time.
+
+### Already in the queue
+
+Joining twice is the one thing that must not happen, so it is checked twice:
+
+- **When you press Arm.** If you are already in, it refuses to arm and says so,
+  rather than looking like a plan for the night that will do nothing.
+- **When the schedule fires.** If you are already in, the join is skipped.
+
+**Logging still starts.** Being already in the queue is still a night of
+position data, which is the point of the exercise.
+
+The check reads two independent signals, either of which is enough: the
+`Position N of M` line, and a `Leave queue` button. One can render before the
+other, and neither alone is worth trusting.
+
+The retry loop carries the same guard on every attempt, not just the first, so a
+reload that lands on an already-joined page stops instead of clicking again.
+
+### What drives the clock
+
+The page's own timer, checked every second. The tab has to be alive to click the
+button anyway, so nothing is gained by putting the clock elsewhere.
+
+`chrome.alarms` in the service worker is a **backstop**, not the driver: Edge
+throttles timers in a background tab to once a minute, so if the queue tab is
+behind another one, the alarm still fires it. Whichever gets there first claims
+the arm, so it can only happen once.
+
+An arm survives page reloads and extension restarts, because it is stored, not
+held in a variable.
+
 ### Where the files go, and why
 
 Everything lands under the browser's **Downloads** folder. An extension cannot
@@ -228,6 +280,7 @@ stable handle, so no manual setup is needed.
 | `src/queue-count.js` | Reads the "N experts currently waiting" line off the page |
 | `src/queue-position.js` | Reads the "Position 412 of 456" line off the page |
 | `src/csv.js` | Builds the CSV text and names each session folder |
+| `src/schedule.js` | Reads the picked time and counts down to it |
 | `src/interceptor.js` | Wraps `fetch` and `XMLHttpRequest` in the page |
 | `src/controller.js` | One attempt per page load, plus the retry loop |
 | `src/logger.js` | The logging clock, in the page so it survives reloads |

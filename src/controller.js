@@ -6,9 +6,15 @@
 (function () {
   const RESULT_EVENT = 'queue-refresh:result';
   const BUTTON_LABEL = 'Join queue';
+  // Only shown once you are in the queue, so it is a second, independent
+  // answer to "am I already in?" that does not depend on the position line.
+  const LEAVE_LABEL = 'Leave queue';
 
   const KEY_ACTIVE = 'queueRefresh.active';
   const KEY_ATTEMPTS = 'queueRefresh.attempts';
+
+  const logger = globalThis.__queueRefreshLogger;
+  const schedule = globalThis.__queueRefreshSchedule;
 
   // Set in .env, written into src/config.js by build.js.
   const settings = globalThis.QUEUE_REFRESH_CONFIG;
@@ -47,10 +53,21 @@
   const nextRetryDelay = () =>
     RETRY_DELAY_MIN_MS + Math.random() * (RETRY_DELAY_MAX_MS - RETRY_DELAY_MIN_MS);
 
-  function findJoinButton() {
+  function findButton(label) {
     return Array.from(document.querySelectorAll('button')).find(
-      (button) => button.textContent.trim() === BUTTON_LABEL
+      (button) => button.textContent.trim() === label
     );
+  }
+
+  const findJoinButton = () => findButton(BUTTON_LABEL);
+
+  /**
+   * Two signals, either of which is enough: the "Position N of M" line, and a
+   * Leave queue button. One page can be slow to render the other, and joining
+   * twice is the thing we must not do.
+   */
+  function alreadyInQueue() {
+    return logger.readSample().state === 'in-queue' || Boolean(findButton(LEAVE_LABEL));
   }
 
   function waitForButton() {
@@ -65,8 +82,6 @@
       poll();
     });
   }
-
-  const logger = globalThis.__queueRefreshLogger;
 
   // Keep looking until the app has rendered the queue line, then stop. A page
   // without one (any other page on the site) simply times out and goes quiet.
@@ -103,6 +118,12 @@
 
   async function runAttempt() {
     if (!isActive()) return;
+
+    // Checked every attempt, not just at the start: a reload can land on a
+    // page where we are already through, and clicking again would be wrong.
+    if (alreadyInQueue()) {
+      return stop('Already in the queue. Not joining again; still logging.');
+    }
 
     const attempt = Number(sessionStorage.getItem(KEY_ATTEMPTS) || '0') + 1;
     sessionStorage.setItem(KEY_ATTEMPTS, String(attempt));
@@ -147,6 +168,97 @@
     return stop(`Stopped on attempt ${attempt}:${detail}`);
   }
 
+  // ---------------------------------------------------------------- schedule
+
+  const SCHEDULE_TICK_MS = 1000;
+  let scheduleTimer = null;
+
+  function setScheduleStatus(text) {
+    console.log('[Queue Refresh] schedule:', text);
+    chrome.storage.local.set({ scheduleStatus: text });
+  }
+
+  /**
+   * The moment has arrived. Claims the arm first so the page tick and the
+   * worker's alarm cannot both fire it, then does exactly one of two things:
+   * join, or stand down because we are already in.
+   */
+  async function fireSchedule() {
+    const { scheduleArmed } = await chrome.storage.local.get('scheduleArmed');
+    if (!scheduleArmed) return;
+
+    // Claimed before anything else happens, so a second trigger finds it gone.
+    await chrome.storage.local.set({ scheduleArmed: false });
+    stopScheduleTick();
+
+    // Logging starts either way: being already in the queue is still a night
+    // of position data, and that is what we are here to collect.
+    logger.start();
+
+    if (alreadyInQueue()) {
+      setScheduleStatus('Fired, but you were already in the queue. Join skipped.');
+      setStatus('Already in the queue. Not joining; logging instead.');
+      return;
+    }
+
+    setScheduleStatus('Fired. Joining now.');
+    sessionStorage.setItem(KEY_ACTIVE, '1');
+    sessionStorage.setItem(KEY_ATTEMPTS, '0');
+
+    // A page that has sat open for hours may hold a stale button or a dead
+    // session, so start the attempt from a fresh load rather than this one.
+    location.reload();
+  }
+
+  function stopScheduleTick() {
+    clearInterval(scheduleTimer);
+    scheduleTimer = null;
+  }
+
+  /**
+   * The page's own clock is the accurate one, and the tab has to be alive to
+   * click anyway. chrome.alarms in the worker is the backstop, not the driver.
+   */
+  function startScheduleTick() {
+    if (scheduleTimer) return;
+    scheduleTimer = setInterval(async () => {
+      const { scheduleArmed, scheduleAt } = await chrome.storage.local.get([
+        'scheduleArmed',
+        'scheduleAt'
+      ]);
+      if (!scheduleArmed || !scheduleAt) return stopScheduleTick();
+      if (Date.now() >= scheduleAt) fireSchedule();
+    }, SCHEDULE_TICK_MS);
+  }
+
+  async function arm(value) {
+    const at = schedule.parseSchedule(value);
+    if (at === null) {
+      return setScheduleStatus('That is not a date I can read. Use the picker.');
+    }
+    if (at <= Date.now()) {
+      return setScheduleStatus('That time has already passed.');
+    }
+    if (alreadyInQueue()) {
+      // Arming would be a no-op that looked like a plan for the night.
+      return setScheduleStatus(
+        'You are already in the queue. Nothing to schedule; press Log only.'
+      );
+    }
+
+    await chrome.storage.local.set({ scheduleArmed: true, scheduleAt: at, scheduleInput: value });
+    await chrome.runtime.sendMessage({ type: 'schedule-set', at }).catch(() => null);
+    setScheduleStatus(`Armed for ${new Date(at).toLocaleString()}.`);
+    startScheduleTick();
+  }
+
+  async function disarm() {
+    await chrome.storage.local.set({ scheduleArmed: false });
+    await chrome.runtime.sendMessage({ type: 'schedule-clear' }).catch(() => null);
+    stopScheduleTick();
+    setScheduleStatus('Disarmed.');
+  }
+
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'start') {
       sessionStorage.setItem(KEY_ACTIVE, '1');
@@ -173,6 +285,9 @@
     if (message.type === 'read-count') {
       logger.sampleNow();
     }
+    if (message.type === 'arm') arm(message.value);
+    if (message.type === 'disarm') disarm();
+    if (message.type === 'schedule-fire') fireSchedule();
     sendResponse({ active: isActive() });
     return false;
   });
@@ -180,4 +295,9 @@
   // Resume automatically after the reload we triggered ourselves.
   runAttempt();
   watchCount();
+
+  // An arm has to survive the reloads and outlive any one page.
+  chrome.storage.local.get('scheduleArmed').then(({ scheduleArmed }) => {
+    if (scheduleArmed) startScheduleTick();
+  });
 })();

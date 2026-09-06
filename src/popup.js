@@ -2,6 +2,9 @@ const statusEl = document.getElementById('status');
 const queueEl = document.getElementById('queue');
 const logEl = document.getElementById('log');
 const shotsEl = document.getElementById('shots');
+const whenEl = document.getElementById('when');
+const countdownEl = document.getElementById('countdown');
+const { formatCountdown } = globalThis.__queueRefreshSchedule;
 
 function render(text) {
   statusEl.textContent = text || 'Idle.';
@@ -63,10 +66,23 @@ function renderLog({ logActive, logStatus, logSession, logShotStatus }) {
   shotsEl.classList.toggle('failed', shots.startsWith('FAILED'));
 }
 
-async function send(type, { quiet = false } = {}) {
+function renderSchedule({ scheduleArmed, scheduleAt, scheduleStatus }) {
+  const armed = Boolean(scheduleArmed && scheduleAt);
+  countdownEl.classList.toggle('armed', armed);
+
+  if (!armed) {
+    countdownEl.textContent = scheduleStatus || 'Not armed.';
+    return;
+  }
+  const left = scheduleAt - Date.now();
+  countdownEl.textContent =
+    `Joining in ${formatCountdown(left)} (${new Date(scheduleAt).toLocaleString()})`;
+}
+
+async function send(type, extra = {}, { quiet = false } = {}) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   try {
-    await chrome.tabs.sendMessage(tab.id, { type });
+    await chrome.tabs.sendMessage(tab.id, { type, ...extra });
     return true;
   } catch (e) {
     // Only a button press earns an error; the reading on open stays silent.
@@ -82,6 +98,11 @@ document.getElementById('stop').addEventListener('click', () => send('stop'));
 document.getElementById('log-only').addEventListener('click', () => send('log-only'));
 document.getElementById('stop-logging').addEventListener('click', () => send('stop-logging'));
 document.getElementById('test-shot').addEventListener('click', () => send('test-shot'));
+document.getElementById('arm').addEventListener('click', () => send('arm', { value: whenEl.value }));
+document.getElementById('disarm').addEventListener('click', () => send('disarm'));
+
+// Typing is kept even if the popup closes before you press Arm.
+whenEl.addEventListener('change', () => chrome.storage.local.set({ scheduleInput: whenEl.value }));
 
 const KEYS = [
   'status',
@@ -93,19 +114,31 @@ const KEYS = [
   'logActive',
   'logStatus',
   'logSession',
-  'logShotStatus'
+  'logShotStatus',
+  'scheduleArmed',
+  'scheduleAt',
+  'scheduleStatus',
+  'scheduleInput'
 ];
+
+let latest = {};
 
 function refresh() {
   chrome.storage.local.get(KEYS).then((stored) => {
+    latest = stored;
     render(stored.status);
     renderQueue(stored);
     renderLog(stored);
+    renderSchedule(stored);
+    if (stored.scheduleInput && !whenEl.value) whenEl.value = stored.scheduleInput;
   });
 }
 
 refresh();
 chrome.storage.onChanged.addListener(refresh);
 
+// The countdown has to move on its own; storage only changes when armed state does.
+setInterval(() => renderSchedule(latest), 1000);
+
 // Ask the page for a reading taken now, rather than trusting what is stored.
-send('read-count', { quiet: true });
+send('read-count', {}, { quiet: true });

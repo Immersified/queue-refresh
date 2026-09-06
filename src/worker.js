@@ -148,6 +148,37 @@ async function stopSession() {
   await setStatus(`Session finished: ${logRows.length} rows in ${ROOT}/${logSession}/`);
 }
 
+// ------------------------------------------------------------------ schedule
+
+const ALARM = 'queue-refresh:schedule';
+
+/**
+ * The backstop. The page's own timer is the accurate trigger, but Edge
+ * throttles timers in a background tab to once a minute, so an alarm covers
+ * the case where the queue tab is not the one in front.
+ */
+async function fireAlarm() {
+  const { scheduleArmed } = await chrome.storage.local.get('scheduleArmed');
+  if (!scheduleArmed) return;
+
+  // The site pattern is already in the manifest; no need to repeat it here.
+  const [matches] = chrome.runtime.getManifest().content_scripts.map((s) => s.matches);
+  const tabs = await chrome.tabs.query({ url: matches });
+
+  if (!tabs.length) {
+    return setStatus('Schedule fired, but no queue tab is open. Nothing to click.');
+  }
+
+  // The content script does the deciding; it is the one that can see the page.
+  for (const tab of tabs) {
+    await chrome.tabs.sendMessage(tab.id, { type: 'schedule-fire' }).catch(() => null);
+  }
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === ALARM) fireAlarm();
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const done = (value) => sendResponse(value ?? null);
 
@@ -158,6 +189,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     takeShot(sender.tab.id, { scheduled: false }).then(done);
   }
   else if (message.type === 'log-stop') stopSession().then(done);
+  else if (message.type === 'schedule-set') {
+    chrome.alarms.create(ALARM, { when: message.at });
+    done();
+  } else if (message.type === 'schedule-clear') {
+    chrome.alarms.clear(ALARM).then(done);
+  }
   else return false;
 
   return true; // The handlers are async; keep the channel open.
