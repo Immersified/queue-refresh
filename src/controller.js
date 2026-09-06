@@ -163,6 +163,13 @@
       logger.stop();
       stop('Stopped by you.');
     }
+    if (message.type === 'stop-logging') {
+      // Leaves the join loop alone: only the logging session ends.
+      logger.stop();
+    }
+    if (message.type === 'test-shot') {
+      chrome.runtime.sendMessage({ type: 'test-shot' });
+    }
     if (message.type === 'read-count') {
       logger.sampleNow();
     }

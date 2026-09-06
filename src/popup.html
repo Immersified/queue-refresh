@@ -9,13 +9,18 @@
   #queue { margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd; color: #444; }
   #queue b { font-weight: 600; }
   #queue .age { color: #888; }
-  #log { margin-top: 8px; padding-top: 8px; border-top: 1px solid #ddd; color: #666; line-height: 1.4; }
+  #log { margin-top: 8px; padding-top: 8px; border-top: 1px solid #ddd; color: #666; line-height: 1.4; white-space: pre-line; }
+  #shots { margin-top: 4px; color: #666; line-height: 1.4; }
+  #shots.failed { color: #b00; }
 </style>
 <h1>Queue Refresh</h1>
 <button id="start">Start</button>
 <button id="stop">Stop</button>
 <button id="log-only">Log only</button>
+<button id="stop-logging">Stop logging</button>
+<button id="test-shot">Test shot</button>
 <div id="status">Idle.</div>
 <div id="queue">Queue: reading…</div>
 <div id="log">Not logging.</div>
+<div id="shots"></div>
 <script src="popup.js"></script>

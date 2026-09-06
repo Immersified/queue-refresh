@@ -56,7 +56,9 @@ committing never overwrites your settings. Edit `.env`, never the generated file
 | --- | --- |
 | **Start** | Retries the Join queue button, and logs from the first attempt |
 | **Log only** | Logs without touching the button, for when you joined by hand |
-| **Stop** | Ends both |
+| **Stop** | Ends both the retry loop and the logging |
+| **Stop logging** | Ends the logging only, leaving the retry loop alone |
+| **Test shot** | Takes a screenshot right now, so you can prove capture works without waiting for the interval |
 
 The popup shows the status, your position (or the queue length before you join),
 and the folder the current session is writing to.
@@ -118,8 +120,8 @@ Each session gets its own folder, so sessions stay comparable:
 ```
 Downloads/queue-refresh/2026-09-06_1916_e27f8b7b/
   log.csv
-  shot-0001_191632.png
-  shot-0002_194632.png
+  shot-0001_191632.jpg
+  shot-0002_194632.jpg
 ```
 
 The folder name is the start time plus the campaign id, so folders sort in the
@@ -148,6 +150,10 @@ SCREENSHOT_INTERVAL_SECONDS=1800
 Screenshots are the ground truth. If the page wording ever changes and the CSV
 goes blank, the images still show what actually happened.
 
+They are JPEGs, not PNGs. The image reaches `chrome.downloads` as a `data:` URL,
+and a full-width PNG base64s into several megabytes, which downloads rejects. At
+quality 85 the position line is still perfectly readable.
+
 **Joining does not stop the logging.** That is deliberate: the climb from
 position 412 to position 1 is the data the formula needs. Press **Stop** to end
 the session.
@@ -166,6 +172,26 @@ prompt.
 Screenshots capture the **visible area of the active tab**. If the queue tab is
 minimised or behind another tab, the capture fails and says so in the popup
 rather than silently writing nothing.
+
+### When screenshots do not appear
+
+The popup keeps the screenshot result on its own line, in red when it failed,
+because it is the one thing that goes unnoticed until the folder turns out to be
+empty in the morning. It is on a separate storage key from the main status for
+exactly that reason: a CSV row lands every tick and would otherwise overwrite the
+reason within seconds.
+
+Press **Test shot** to trigger a capture immediately. Common answers:
+
+| Message | Fix |
+| --- | --- |
+| `the queue tab is not the visible tab in its window` | Bring the tab to the front. Capture only ever sees the visible tab |
+| `No session running` | Press **Start** or **Log only** first |
+| Anything mentioning permission or access | Send me the wording; it is a manifest fix |
+
+For the full picture, open `edge://extensions`, click **service worker** on the
+extension card, and read its Console. Every save and every failure is logged
+there whether or not the popup is open.
 
 ## Why it finds the button by text
 

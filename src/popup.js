@@ -1,6 +1,7 @@
 const statusEl = document.getElementById('status');
 const queueEl = document.getElementById('queue');
 const logEl = document.getElementById('log');
+const shotsEl = document.getElementById('shots');
 
 function render(text) {
   statusEl.textContent = text || 'Idle.';
@@ -48,12 +49,18 @@ function bold(text) {
   return el;
 }
 
-function renderLog({ logActive, logStatus, logSession }) {
+function renderLog({ logActive, logStatus, logSession, logShotStatus }) {
   if (!logActive) {
     logEl.textContent = logStatus || 'Not logging.';
-    return;
+  } else {
+    logEl.textContent = `${logStatus || 'Logging…'}\nFolder: queue-refresh/${logSession}/`;
   }
-  logEl.textContent = `${logStatus || 'Logging…'}\nFolder: queue-refresh/${logSession}/`;
+
+  // Its own line, because a screenshot failure is the one thing that goes
+  // unnoticed until the folder turns out to be empty in the morning.
+  const shots = logShotStatus || '';
+  shotsEl.textContent = shots ? `Screenshots: ${shots}` : '';
+  shotsEl.classList.toggle('failed', shots.startsWith('FAILED'));
 }
 
 async function send(type, { quiet = false } = {}) {
@@ -73,6 +80,8 @@ async function send(type, { quiet = false } = {}) {
 document.getElementById('start').addEventListener('click', () => send('start'));
 document.getElementById('stop').addEventListener('click', () => send('stop'));
 document.getElementById('log-only').addEventListener('click', () => send('log-only'));
+document.getElementById('stop-logging').addEventListener('click', () => send('stop-logging'));
+document.getElementById('test-shot').addEventListener('click', () => send('test-shot'));
 
 const KEYS = [
   'status',
@@ -83,7 +92,8 @@ const KEYS = [
   'queueState',
   'logActive',
   'logStatus',
-  'logSession'
+  'logSession',
+  'logShotStatus'
 ];
 
 function refresh() {

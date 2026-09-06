@@ -35,6 +35,13 @@ function setStatus(text) {
   return chrome.storage.local.set({ logStatus: text });
 }
 
+// Its own key, not logStatus: a screenshot failure has to outlive the CSV
+// tick that lands a second later, or it is invisible.
+function setShotStatus(text) {
+  console.log('[Queue Refresh] screenshot:', text);
+  return chrome.storage.local.set({ logShotStatus: text });
+}
+
 async function startSession(url) {
   const folder = sessionFolder(url, new Date());
   await chrome.storage.local.set({
@@ -43,7 +50,8 @@ async function startSession(url) {
     logRows: [],
     logShots: 0,
     logStartedAt: Date.now(),
-    logLastShotAt: 0
+    logLastShotAt: 0,
+    logShotStatus: 'No screenshot yet.'
   });
   await setStatus(`Logging to ${ROOT}/${folder}/`);
   return folder;
@@ -84,28 +92,49 @@ async function addSample(sample) {
   await setStatus(`${rows.length} rows logged, latest: ${where}.`);
 }
 
-async function takeShot(tabId) {
+/**
+ * JPEG rather than PNG. The image travels to chrome.downloads as a data: URL,
+ * and a full-width PNG base64s into megabytes, which downloads rejects. At
+ * quality 85 the position line is still perfectly readable.
+ *
+ * @param {boolean} scheduled false for a manual test shot, which must not
+ *   reset the interval or the next real capture slips by a full period.
+ */
+async function takeShot(tabId, { scheduled = true } = {}) {
   const store = await chrome.storage.local.get(['logSession', 'logShots']);
-  if (!store.logSession) return;
+  if (!store.logSession) {
+    return setShotStatus('No session running. Press Start or Log only first.');
+  }
 
   // Claimed before the capture so a failure cannot spin on every tick.
   const count = (store.logShots || 0) + 1;
-  await chrome.storage.local.set({ logShots: count, logLastShotAt: Date.now() });
+  const patch = { logShots: count };
+  if (scheduled) patch.logLastShotAt = Date.now();
+  await chrome.storage.local.set(patch);
 
   try {
     const tab = await chrome.tabs.get(tabId);
-    const image = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+    if (!tab.active) {
+      throw new Error('the queue tab is not the visible tab in its window');
+    }
+
+    const image = await chrome.tabs.captureVisibleTab(tab.windowId, {
+      format: 'jpeg',
+      quality: 85
+    });
 
     const now = new Date();
     const pad = (n) => String(n).padStart(2, '0');
     const stamp = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-    const name = `shot-${String(count).padStart(4, '0')}_${stamp}.png`;
+    const name = `shot-${String(count).padStart(4, '0')}_${stamp}.jpg`;
 
     await save(image, `${ROOT}/${store.logSession}/${name}`);
+    await setShotStatus(`${count} saved, latest ${name}`);
   } catch (error) {
-    // The tab must be the visible one in its window for a capture to work.
-    // Say so loudly rather than discovering a night of blank folders later.
-    await setStatus(`Screenshot failed: ${error.message}`);
+    // Hand the number back so a failed attempt does not burn a slot, and keep
+    // the reason on its own key where the next CSV row cannot erase it.
+    await chrome.storage.local.set({ logShots: count - 1 });
+    await setShotStatus(`FAILED: ${error.message}`);
   }
 }
 
@@ -125,6 +154,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'log-start') startSession(message.url).then(done);
   else if (message.type === 'log-sample') addSample(message.sample).then(done);
   else if (message.type === 'log-shot') takeShot(sender.tab.id).then(done);
+  else if (message.type === 'test-shot') {
+    takeShot(sender.tab.id, { scheduled: false }).then(done);
+  }
   else if (message.type === 'log-stop') stopSession().then(done);
   else return false;
 
