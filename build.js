@@ -264,4 +264,11 @@ if (require.main === module) {
   }
 }
 
-module.exports = { parseEnv, validate, readConfig, toMatchPattern, fillTemplate };
+module.exports = {
+  parseEnv,
+  validate,
+  validateTelegram,
+  readConfig,
+  toMatchPattern,
+  fillTemplate
+};

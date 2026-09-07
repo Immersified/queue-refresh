@@ -218,9 +218,23 @@ TELEGRAM_CHAT_ID=123456789
 TELEGRAM_INTERVAL_SECONDS=300
 ```
 
+**5. Check it before involving the extension.**
+
+```
+node check-telegram.js
+```
+
+It sends one test message using the settings already in `.env`, so the token
+never has to be retyped. It checks only the Telegram half, because a wrong
+`SITE_URL` has nothing to do with whether a bot token works.
+
+**6. Apply it.**
+
 ```
 node build.js
 ```
+
+Then reload the extension card and the page.
 
 Leave both blank to turn it off. Set only one and `build.js` stops: a token with
 nowhere to send is a silent no-op you would not notice until morning.
@@ -428,6 +442,7 @@ stable handle, so no manual setup is needed.
 | `src/schedule.js` | Reads the picked time and counts down to it |
 | `src/telegram.js` | Builds the text that goes to your phone |
 | `src/watchdog.js` | Decides when a silent page needs reloading |
+| `check-telegram.js` | Sends one test message to prove the bot works |
 | `windows/start-edge.bat` | Launches Edge with the flags that survive a disconnect |
 | `windows/keep-session-alive.bat` | Disconnects RDP without taking the desktop away |
 | `windows/edge-policies.reg` | Turns off sleeping tabs and efficiency mode |
