@@ -11,10 +11,11 @@
  * The worker is killed whenever it goes idle, so no state is kept in memory:
  * every handler reads and writes chrome.storage.local.
  */
-importScripts('/src/csv.js', '/src/config.js', '/src/telegram.js');
+importScripts('/src/csv.js', '/src/config.js', '/src/telegram.js', '/src/watchdog.js');
 
 const { toCsv, sessionFolder } = globalThis.__queueRefreshCsv;
 const { formatUpdate } = globalThis.__queueRefreshTelegram;
+const { shouldRevive } = globalThis.__queueRefreshWatchdog;
 
 // null when .env carries no token, which is how Telegram stays optional.
 const TELEGRAM = (globalThis.QUEUE_REFRESH_CONFIG || {}).telegram || null;
@@ -212,6 +213,77 @@ async function maybeNotify(sample, startedAt) {
   await notify(formatUpdate(sample, store.telegramPosition ?? null, Date.now() - startedAt));
 }
 
+// ------------------------------------------------------------------ watchdog
+
+const WATCHDOG = 'queue-refresh:watchdog';
+
+// Three minutes of silence from a page that beats every thirty seconds.
+const STALE_MS = 180000;
+const REVIVE_COOLDOWN_MS = 180000;
+
+const siteMatches = () => chrome.runtime.getManifest().content_scripts[0].matches;
+
+/**
+ * Puts the queue page back in front, loaded and visible.
+ *
+ * Bringing the tab forward is not cosmetic: a screenshot can only capture the
+ * visible tab, and a background tab has its timers throttled to once a minute.
+ */
+async function revive(reason) {
+  const { lastSeenUrl } = await chrome.storage.local.get('lastSeenUrl');
+  await chrome.storage.local.set({ watchdogRevivedAt: Date.now() });
+
+  const tabs = await chrome.tabs.query({ url: siteMatches() });
+
+  if (!tabs.length) {
+    if (!lastSeenUrl) {
+      return setWatchdogStatus(`${reason}, but no queue tab and no URL to reopen.`);
+    }
+    await chrome.tabs.create({ url: lastSeenUrl, active: true });
+    return setWatchdogStatus(`${reason}. Reopened ${lastSeenUrl}`);
+  }
+
+  const [tab] = tabs;
+  await chrome.windows.update(tab.windowId, { focused: true }).catch(() => null);
+  await chrome.tabs.update(tab.id, { active: true });
+  await chrome.tabs.reload(tab.id);
+  await setWatchdogStatus(`${reason}. Reloaded and brought to the front.`);
+}
+
+function setWatchdogStatus(text) {
+  console.log('[Queue Refresh] watchdog:', text);
+  return chrome.storage.local.set({ watchdogStatus: text });
+}
+
+async function checkAlive() {
+  const store = await chrome.storage.local.get([
+    'logActive',
+    'scheduleArmed',
+    'pageHeartbeatAt',
+    'watchdogRevivedAt'
+  ]);
+
+  // Nothing is depending on the page, so a quiet one is not a problem.
+  if (!store.logActive && !store.scheduleArmed) return;
+
+  const due = shouldRevive({
+    heartbeatAt: store.pageHeartbeatAt,
+    revivedAt: store.watchdogRevivedAt,
+    now: Date.now(),
+    staleMs: STALE_MS,
+    cooldownMs: REVIVE_COOLDOWN_MS
+  });
+  if (!due) return;
+
+  const quiet = Math.round((Date.now() - (store.pageHeartbeatAt || 0)) / 1000);
+  await revive(`Page silent for ${quiet}s`);
+  await notify(`Queue Refresh\nPage had stopped responding. Reloaded it.`, { silent: false });
+}
+
+// Alarms keep firing when page timers do not, which is the whole point of
+// putting the watchdog here rather than in the page it is watching.
+chrome.alarms.create(WATCHDOG, { periodInMinutes: 1 });
+
 // ------------------------------------------------------------------ schedule
 
 const ALARM = 'queue-refresh:schedule';
@@ -241,6 +313,7 @@ async function fireAlarm() {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM) fireAlarm();
+  if (alarm.name === WATCHDOG) checkAlive();
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

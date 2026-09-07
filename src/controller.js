@@ -292,6 +292,19 @@
     return false;
   });
 
+  // ------------------------------------------------------------- heartbeat
+
+  // A suspended renderer cannot write this, which is exactly how the worker
+  // finds out the page has stopped living. Runs whether or not we are logging.
+  const HEARTBEAT_MS = 30000;
+
+  function beat() {
+    chrome.storage.local.set({ pageHeartbeatAt: Date.now(), lastSeenUrl: location.href });
+  }
+
+  beat();
+  setInterval(beat, HEARTBEAT_MS);
+
   // Resume automatically after the reload we triggered ourselves.
   runAttempt();
   watchCount();

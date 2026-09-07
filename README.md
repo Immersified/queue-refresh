@@ -243,6 +243,68 @@ wording is passed through:
 
 A failure never interrupts logging. The CSV and screenshots carry on.
 
+## Running it unattended on a VPS
+
+The page stops loading the moment nobody is looking at it. There are two causes
+and they need different fixes.
+
+**1. Edge suspends the renderer when the session has no display.** Disconnecting
+an RDP session leaves it running but with nothing to draw on. Windows reports the
+window as hidden, Edge concludes nobody can see it, and stops rendering: the tab
+never loads, timers freeze, and screenshots come back blank. Reconnecting gives
+it a display again, which is why everything springs to life when you log in.
+
+**2. Tabs restored from a previous session load lazily.** Edge brings back the
+tab strip but does not fetch anything until a tab is clicked. A queue tab
+restored this way is an empty placeholder with no content script in it.
+
+### The fix, in order of what matters
+
+**Launch Edge with occlusion detection off.** `windows/start-edge.bat`:
+
+```
+windows\start-edge.bat "https://feather.openai.com/campaigns/<id>?tab=tasks"
+```
+
+`--disable-features=CalculateNativeWinOcclusion` is the one that counts: it stops
+Edge concluding the window is hidden. Passing the URL on the command line also
+sidesteps lazy session restore, because the page is loaded rather than restored.
+
+**Disconnect, never log off.** Logging off ends the session and closes Edge.
+Even disconnecting cleanly leaves no display, so use
+`windows/keep-session-alive.bat` instead of closing the remote window. It hands
+the session to the console, which keeps a real desktop attached. Your view
+drops; the desktop keeps drawing.
+
+**Turn off sleeping tabs.** `windows/edge-policies.reg`, then restart Edge. A
+discarded tab has no content script at all.
+
+**Stop the machine idling.**
+
+```
+powercfg /change standby-timeout-ac 0
+powercfg /change monitor-timeout-ac 0
+powercfg /change disk-timeout-ac 0
+```
+
+### The watchdog
+
+Settings can still be got wrong, so the extension checks its own page.
+
+The content script writes a heartbeat every 30 seconds. A suspended renderer
+cannot write one, which is precisely how it gives itself away. The service
+worker checks every minute on a `chrome.alarms` tick, which keeps firing when
+page timers do not, and after three minutes of silence it brings the tab to the
+front and reloads it.
+
+It only watches while a logging session is running or a schedule is armed, waits
+three minutes between attempts so it cannot sit in a reload loop, and reopens the
+last known queue URL if the tab has gone entirely.
+
+The result is in the popup, and Telegram gets a loud message if it fires. A
+revive in the log means the settings above are not right yet: the watchdog is a
+net, not a fix.
+
 ## Scheduled start
 
 Temporary, for collecting data. Pick a time in the popup, press **Arm**, and
@@ -365,6 +427,10 @@ stable handle, so no manual setup is needed.
 | `src/csv.js` | Builds the CSV text and names each session folder |
 | `src/schedule.js` | Reads the picked time and counts down to it |
 | `src/telegram.js` | Builds the text that goes to your phone |
+| `src/watchdog.js` | Decides when a silent page needs reloading |
+| `windows/start-edge.bat` | Launches Edge with the flags that survive a disconnect |
+| `windows/keep-session-alive.bat` | Disconnects RDP without taking the desktop away |
+| `windows/edge-policies.reg` | Turns off sleeping tabs and efficiency mode |
 | `src/interceptor.js` | Wraps `fetch` and `XMLHttpRequest` in the page |
 | `src/controller.js` | One attempt per page load, plus the retry loop |
 | `src/logger.js` | The logging clock, in the page so it survives reloads |
