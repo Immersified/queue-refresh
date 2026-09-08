@@ -24,6 +24,13 @@
   const LOG_INTERVAL_MS = settings.logIntervalMs;
   const SHOT_INTERVAL_MS = settings.screenshotIntervalMs;
 
+  const { readOfferExpired, readJoinPrompt, exitReason } = globalThis.__queueRefreshExit;
+
+  // Two readings, not one. A page can render the join view for a moment while
+  // hydrating, and ending a night's session on a single frame would be a
+  // worse bug than the one this fixes.
+  const EXIT_CONFIRMATIONS = 2;
+
   let timer = null;
 
   /** Everything the page can tell us right now. */
@@ -32,9 +39,12 @@
     const place = globalThis.__queueRefreshReadPosition(text);
     const waiting = globalThis.__queueRefreshReadCount(text);
 
+    // Order matters: a position on the page beats everything, because it is
+    // the only reading that means we are still in.
     let state = 'unknown';
     if (place) state = 'in-queue';
-    else if (waiting !== null) state = 'not-joined';
+    else if (readOfferExpired(text)) state = 'offer-expired';
+    else if (waiting !== null || readJoinPrompt(text)) state = 'not-joined';
 
     return {
       at: Date.now(),
@@ -75,14 +85,18 @@
   const ask = (message) => chrome.runtime.sendMessage(message).catch(() => null);
 
   async function tick() {
-    const { logActive, logLastShotAt = 0 } = await chrome.storage.local.get([
-      'logActive',
-      'logLastShotAt'
-    ]);
+    const {
+      logActive,
+      logLastShotAt = 0,
+      logExitStreak = 0
+    } = await chrome.storage.local.get(['logActive', 'logLastShotAt', 'logExitStreak']);
     if (!logActive) return stop();
 
     const sample = readSample();
     publish(sample);
+
+    // Logged before any decision to stop: the row that shows the queue run
+    // ending is the most interesting one in the file.
     await ask({ type: 'log-sample', sample });
 
     // Checked on every tick rather than kept on its own timer, so a page
@@ -90,6 +104,18 @@
     if (Date.now() - logLastShotAt >= SHOT_INTERVAL_MS) {
       await ask({ type: 'log-shot' });
     }
+
+    const reason = exitReason(sample.state);
+    if (!reason) {
+      // The streak lives in storage because a reload would otherwise reset it
+      // and a page that reloads often could never reach the threshold.
+      if (logExitStreak) await chrome.storage.local.set({ logExitStreak: 0 });
+      return;
+    }
+
+    const streak = logExitStreak + 1;
+    await chrome.storage.local.set({ logExitStreak: streak });
+    if (streak >= EXIT_CONFIRMATIONS) await finish(reason);
   }
 
   function run() {
@@ -115,13 +141,14 @@
     const { logActive } = await chrome.storage.local.get('logActive');
     if (logActive) return run();
 
+    await chrome.storage.local.set({ logExitStreak: 0 });
     await ask({ type: 'log-start', url: location.href });
     run();
   }
 
-  async function finish() {
+  async function finish(reason) {
     stop();
-    await ask({ type: 'log-stop' });
+    await ask({ type: 'log-stop', reason });
   }
 
   // Resume after the join loop's reload, without starting a fresh session.

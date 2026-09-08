@@ -172,8 +172,29 @@ and a full-width PNG base64s into several megabytes, which downloads rejects. At
 quality 85 the position line is still perfectly readable.
 
 **Joining does not stop the logging.** That is deliberate: the climb from
-position 412 to position 1 is the data the formula needs. Press **Stop** to end
-the session.
+position 412 to position 1 is the data the formula needs.
+
+### How a session ends
+
+By itself, when the position line goes away. There are two ways that happens,
+and the CSV records which:
+
+| Page says | `state` | Meaning |
+| --- | --- | --- |
+| `Task offer expired` | `offer-expired` | You reached the front and the offer lapsed |
+| `Join the queue to get the next available task.` | `not-joined` | Out of the queue, no offer involved |
+
+Both send a Telegram message, loudly, because both mean the night is over.
+
+Ending needs **two consecutive readings**, not one. A page can render the join
+view for a moment while hydrating, and ending a session on a single frame would
+be worse than the runaway logging it replaces. A page that says nothing at all,
+mid-load, never counts: a blank read is not evidence of having left.
+
+The row that shows the ending is written before the session stops, so the last
+line of the CSV is the one that says what happened.
+
+Press **Stop** to end it by hand at any point.
 
 ## Telegram
 
@@ -438,6 +459,7 @@ stable handle, so no manual setup is needed.
 | `src/classify.js` | Reads a GraphQL body, decides full / joined / error |
 | `src/queue-count.js` | Reads the "N experts currently waiting" line off the page |
 | `src/queue-position.js` | Reads the "Position 412 of 456" line off the page |
+| `src/queue-exit.js` | Spots the two ways a queue run ends |
 | `src/csv.js` | Builds the CSV text and names each session folder |
 | `src/schedule.js` | Reads the picked time and counts down to it |
 | `src/telegram.js` | Builds the text that goes to your phone |

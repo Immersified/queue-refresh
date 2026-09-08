@@ -148,17 +148,27 @@ async function takeShot(tabId, { scheduled = true } = {}) {
   }
 }
 
-async function stopSession() {
+// Reaching the front and letting the offer lapse is a different outcome from
+// simply not being in the queue, and the difference matters to the formula.
+const ENDINGS = {
+  'offer-expired': 'Task offer expired. You reached the front.',
+  'not-in-queue': 'No longer in the queue.'
+};
+
+async function stopSession(reason) {
   await writeCsv();
   const { logRows = [], logSession } = await chrome.storage.local.get([
     'logRows',
     'logSession'
   ]);
-  await chrome.storage.local.set({ logActive: false });
-  await setStatus(`Session finished: ${logRows.length} rows in ${ROOT}/${logSession}/`);
-  await notify(`Queue Refresh\nSession finished. ${logRows.length} rows logged.`, {
-    silent: false
-  });
+  await chrome.storage.local.set({ logActive: false, logExitStreak: 0 });
+
+  const why = ENDINGS[reason] || 'Stopped by hand.';
+  await setStatus(`${why} ${logRows.length} rows in ${ROOT}/${logSession}/`);
+  await notify(
+    `Queue Refresh\n${why}\nLogging stopped, ${logRows.length} rows saved.`,
+    { silent: false }
+  );
 }
 
 // ------------------------------------------------------------------ telegram
@@ -325,7 +335,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   else if (message.type === 'test-shot') {
     takeShot(sender.tab.id, { scheduled: false }).then(done);
   }
-  else if (message.type === 'log-stop') stopSession().then(done);
+  else if (message.type === 'log-stop') stopSession(message.reason).then(done);
   else if (message.type === 'schedule-set') {
     chrome.alarms.create(ALARM, { when: message.at });
     done();

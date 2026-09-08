@@ -27,6 +27,8 @@ function renderQueue(stored) {
   let body = null;
   if (queueState === 'in-queue' && typeof queuePosition === 'number') {
     body = [`Position `, bold(String(queuePosition)), ` of ${queueTotal}`];
+  } else if (queueState === 'offer-expired') {
+    body = [bold('Task offer expired'), '. You are out of the queue.'];
   } else if (typeof queueCount === 'number') {
     const people = queueCount === 1 ? 'expert' : 'experts';
     body = ['Queue length: ', bold(String(queueCount)), ` ${people} waiting`];
