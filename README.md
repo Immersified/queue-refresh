@@ -311,10 +311,18 @@ different page, but the pinned tab is the normal route — see
 [Cold launch](#cold-launch).
 
 **Disconnect, never log off.** Logging off ends the session and closes Edge.
-Even disconnecting cleanly leaves no display, so use
-`windows/keep-session-alive.bat` instead of closing the remote window. It hands
-the session to the console, which keeps a real desktop attached. Your view
-drops; the desktop keeps drawing.
+Closing the remote window is fine: just disconnect.
+
+**Do not use `tscon`.** `windows/keep-session-alive.bat` is kept for reference
+but is no longer part of the routine. Tested on 20 September 2026: with the
+occlusion flag set, a plain RDP disconnect left `log.csv` growing normally, so
+handing the session to the console was solving a problem that no longer exists.
+
+It is worth avoiding rather than merely unnecessary. `tscon` swaps the display
+mid-session, so `screen.width`, `screen.height` and `devicePixelRatio` all
+change at once in a live page — which reads as a headless browser and is the
+most likely reason Cloudflare was asking for verification. See
+[Cloudflare](#cloudflare).
 
 **Turn off sleeping tabs.** `windows/edge-policies.reg`, then restart Edge. A
 discarded tab has no content script at all.
@@ -437,14 +445,16 @@ Worth knowing, because avoiding it beats detecting it:
 
 | Trigger | Notes |
 | --- | --- |
-| **`tscon` to the console** | Changes the display mid-session. `screen.width`, `screen.height` and `devicePixelRatio` all jump at once, which reads as a headless browser |
+| **`tscon` to the console** | The likely one, and now avoidable. Changes the display mid-session: `screen.width`, `screen.height` and `devicePixelRatio` all jump at once, which reads as a headless browser |
 | **Datacenter IP** | A VPS gets far more scrutiny than a home connection |
 | **A fresh profile** | No `cf_clearance` cookie yet. A persistent profile usually walks straight through |
 
-The first one is worth testing: disconnect RDP normally, without
-`keep-session-alive.bat`, and see whether `log.csv` keeps growing. If it does,
-`tscon` was not needed and the challenge goes away with it. If it does not, match
-your RDP resolution to the console's before disconnecting so nothing jumps.
+The first one is settled. Tested on 20 September 2026: a plain RDP disconnect,
+with no `tscon`, left the logging running. So `keep-session-alive.bat` is out of
+the routine and the display no longer changes under the page.
+
+The other two remain, which is why the detection stays. A cookie expires or an
+IP gets reclassified and the challenge comes back on a night nobody is watching.
 
 ## Scheduled start
 
@@ -574,7 +584,7 @@ stable handle, so no manual setup is needed.
 | `check-telegram.js` | Sends one test message to prove the bot works |
 | `windows/start-edge.bat` | Launches Edge with the flags that survive a disconnect |
 | `windows/schedule-launch.bat` | Registers the Task Scheduler job that runs it |
-| `windows/keep-session-alive.bat` | Disconnects RDP without taking the desktop away |
+| `windows/keep-session-alive.bat` | Not needed any more. Kept for reference |
 | `windows/edge-policies.reg` | Turns off sleeping tabs and efficiency mode |
 | `src/interceptor.js` | Wraps `fetch` and `XMLHttpRequest` in the page |
 | `src/controller.js` | One attempt per page load, plus the retry loop |
