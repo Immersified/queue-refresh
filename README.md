@@ -407,6 +407,10 @@ windows\schedule-launch.bat /delete        remove it
 Give it a few minutes' head start: the tab usually wakes on the watchdog tick
 about a minute after Edge opens.
 
+**Edge does not need to be open beforehand, and it does not need to be closed
+either.** The task closes it first. See [Why it closes Edge
+first](#why-it-closes-edge-first).
+
 **7. Stop using `keep-session-alive.bat`.** Just close the RDP window.
 
 ### Checking it worked
@@ -417,9 +421,19 @@ Without waiting for the morning:
 windows\schedule-launch.bat          shows the scheduled task, or says there is none
 ```
 
-Then close Edge and run `windows\start-edge.bat` by hand. The pinned tab should
-come forward and start clicking within about a minute, and the popup status
-should say `Auto-start: the browser has just started. Joining.`
+Then run the launch exactly as the task will:
+
+```
+windows\start-edge.bat /restart
+```
+
+The pinned tab should come forward and start clicking within about a minute,
+and the popup status should say
+`Auto-start: the browser has just started. Joining.`
+
+If nothing happens, the usual cause is that Edge never actually restarted —
+check the console for `Browser started` under the extension's service worker in
+`edge://extensions`.
 
 ### Why the pinned tab, and not a URL somewhere
 
@@ -427,6 +441,33 @@ Because the campaign changes and the pinned tab is already how you deal with
 that. Open the new campaign in the pinned tab and the update is done: no
 `.env`, no `node build.js`, no extension reload, no scheduled task to edit.
 Nothing in the repo holds a campaign URL, which is the point.
+
+### Why it closes Edge first
+
+The extension joins on `chrome.runtime.onStartup`, and that only fires when Edge
+really starts. Launching it while it is already running adds a window to the
+existing process: no startup event, nothing joins, and the night passes quietly.
+
+A browser left open from last night is the normal state on a machine that does
+this every day, so the scheduled task always passes `/restart`, which closes
+Edge before launching it.
+
+The close is a **graceful** one — `taskkill` with no `/f`. That is what makes
+Edge write its session file, which is what puts the pinned tabs back. Only if
+it is still there after fifteen seconds does it get forced, and the script says
+so, because a forced close can lose the pinned tabs and the campaign URL with
+them.
+
+```
+start-edge.bat              launch, leave a running Edge alone
+start-edge.bat /restart     close it first, then launch
+```
+
+By hand, without `/restart`, nothing of yours gets closed.
+
+**One thing to know:** if a queue run from the night before is still going at
+the scheduled time, the restart ends it. Move the schedule, or use **Arm** in
+the popup instead, which joins in the browser you already have open.
 
 ### Why it does not need a program to click the tab
 
@@ -444,7 +485,8 @@ no screen coordinates, nothing that breaks when the screen resolution changes.
 
 ### The order it happens in
 
-1. Task Scheduler runs `start-edge.bat`, with no URL.
+1. Task Scheduler runs `start-edge.bat /restart`, with no URL. Any running Edge
+   is closed gracefully first, so `onStartup` has a real start to fire on.
 2. Edge starts and restores the pinned tabs.
 3. `chrome.runtime.onStartup` fires. If the tickbox is on, it sets a pending
    flag and tries to wake the tab.

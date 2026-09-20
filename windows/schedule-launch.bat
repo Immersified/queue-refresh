@@ -43,10 +43,15 @@ if /i "%HOW%"=="daily" (
   set "SCHEDULE=/sc once /st %WHEN%"
 )
 
+REM /restart matters. The extension joins on chrome.runtime.onStartup, which
+REM only fires when Edge really starts; launching it while it is already
+REM running adds a window and nothing else. A browser left open overnight is
+REM the normal state here, so the task always closes it first.
+REM
 REM /f replaces an existing task rather than failing, so re-running this with a
 REM new time is how you change it. /rl limited: nothing here needs elevation,
 REM and a browser started as admin is a browser with a different profile.
-schtasks /create /tn "%TASK%" /tr "\"%LAUNCH%\"" %SCHEDULE% /rl limited /f
+schtasks /create /tn "%TASK%" /tr "\"%LAUNCH%\" /restart" %SCHEDULE% /rl limited /f
 if errorlevel 1 (
   echo.
   echo Could not create the task. A "once" task whose time has already passed
@@ -55,5 +60,8 @@ if errorlevel 1 (
 )
 
 echo.
-echo Scheduled. Edge will launch at %WHEN% (%HOW%^).
-echo Check the extension popup has "Join when the browser starts" ticked.
+echo Scheduled. At %WHEN% (%HOW%^) Edge will be closed and relaunched, and the
+echo pinned queue tab woken about a minute later.
+echo.
+echo Check the extension popup has "Join when the browser starts" ticked,
+echo and that the campaign tab is pinned.
