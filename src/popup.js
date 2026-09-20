@@ -5,6 +5,9 @@ const shotsEl = document.getElementById('shots');
 const telegramEl = document.getElementById('telegram');
 const whenEl = document.getElementById('when');
 const countdownEl = document.getElementById('countdown');
+const autoStartEl = document.getElementById('auto-start');
+const hintEl = document.querySelector('#launch .hint');
+const challengeEl = document.getElementById('challenge');
 const { formatCountdown } = globalThis.__queueRefreshSchedule;
 
 function render(text) {
@@ -88,6 +91,27 @@ function renderSchedule({ scheduleArmed, scheduleAt, scheduleStatus }) {
     `Joining in ${formatCountdown(left)} (${new Date(scheduleAt).toLocaleString()})`;
 }
 
+function renderLaunch({ autoStart, autoStartPending }) {
+  // Not touched while it has focus, or a storage tick could undo a click that
+  // has not been written yet.
+  if (document.activeElement !== autoStartEl) autoStartEl.checked = Boolean(autoStart);
+
+  hintEl.textContent = autoStartPending
+    ? 'Browser started. Waiting for the queue tab to wake up…'
+    : 'Wakes the pinned queue tab and joins. Leave the tab pinned.';
+}
+
+// Only ever shown when it happened recently: a challenge from three nights ago
+// is history, not a thing to act on.
+const CHALLENGE_SHOW_MS = 3600000;
+
+function renderChallenge({ challengeAt }) {
+  const recent = challengeAt && Date.now() - challengeAt < CHALLENGE_SHOW_MS;
+  challengeEl.textContent = recent
+    ? `Cloudflare asked for verification ${describeAge(Date.now() - challengeAt)}. Clear it by hand.`
+    : '';
+}
+
 async function send(type, extra = {}, { quiet = false } = {}) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   try {
@@ -113,6 +137,16 @@ document.getElementById('disarm').addEventListener('click', () => send('disarm')
 // Typing is kept even if the popup closes before you press Arm.
 whenEl.addEventListener('change', () => chrome.storage.local.set({ scheduleInput: whenEl.value }));
 
+// Storage, not .env: this is a setting you turn on once and leave, and putting
+// it in .env would mean node build.js and an extension reload to change it.
+// Unticking also clears a pending start, so it cannot fire after you said no.
+autoStartEl.addEventListener('change', () => {
+  const on = autoStartEl.checked;
+  const patch = { autoStart: on };
+  if (!on) patch.autoStartPending = false;
+  chrome.storage.local.set(patch);
+});
+
 const KEYS = [
   'status',
   'queueCount',
@@ -128,7 +162,10 @@ const KEYS = [
   'scheduleArmed',
   'scheduleAt',
   'scheduleStatus',
-  'scheduleInput'
+  'scheduleInput',
+  'autoStart',
+  'autoStartPending',
+  'challengeAt'
 ];
 
 let latest = {};
@@ -141,6 +178,8 @@ function refresh() {
     renderLog(stored);
     renderTelegram(stored);
     renderSchedule(stored);
+    renderLaunch(stored);
+    renderChallenge(stored);
     if (stored.scheduleInput && !whenEl.value) whenEl.value = stored.scheduleInput;
   });
 }

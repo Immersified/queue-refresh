@@ -15,6 +15,7 @@
 
   const logger = globalThis.__queueRefreshLogger;
   const schedule = globalThis.__queueRefreshSchedule;
+  const challenge = globalThis.__queueRefreshChallenge;
 
   // Set in .env, written into src/config.js by build.js.
   const settings = globalThis.QUEUE_REFRESH_CONFIG;
@@ -171,6 +172,78 @@
     return stop(`Stopped on attempt ${attempt}:${detail}`);
   }
 
+  // -------------------------------------------------------------- cloudflare
+
+  // The automatic challenge passes itself in a few seconds and takes the page
+  // with it. Only the kind that waits for a human is worth waking anyone up
+  // for, so the automatic one gets this long to finish first.
+  const CHALLENGE_GRACE_MS = 8000;
+
+  /**
+   * Is a Cloudflare interstitial standing in front of the page right now?
+   *
+   * A page still showing queue content is not a challenge page, whatever else
+   * is in the DOM. That guard is here rather than in challenge.js so the
+   * detector stays a pure function the tests can reach.
+   */
+  function challengeBlocking() {
+    if (alreadyInQueue() || findJoinButton()) return false;
+
+    return challenge.isChallengePage({
+      title: document.title,
+      text: document.body ? document.body.innerText : '',
+      hasWidget: Boolean(document.querySelector(challenge.WIDGET_SELECTOR))
+    });
+  }
+
+  /**
+   * Stop, and make some noise.
+   *
+   * Deliberately does not reload. Reloading is what turns one challenge into a
+   * run of them, and every reload is another request Cloudflare counts. The
+   * arm, if there is one, is left alone: clear the challenge before it fires
+   * and the night still happens.
+   */
+  function haltForChallenge() {
+    sessionStorage.setItem(KEY_ACTIVE, '0');
+    setStatus('Cloudflare is asking for verification. Stopped; clear it by hand.');
+    chrome.runtime.sendMessage({ type: 'challenge' }).catch(() => null);
+  }
+
+  /** @returns {Promise<boolean>} true when the page is blocked and we stopped. */
+  async function guardChallenge() {
+    if (!challengeBlocking()) return false;
+
+    setStatus('Cloudflare check on the page. Giving it a moment to pass by itself.');
+    await sleep(CHALLENGE_GRACE_MS);
+    if (!challengeBlocking()) return false;
+
+    haltForChallenge();
+    return true;
+  }
+
+  // --------------------------------------------------------------- autostart
+
+  /**
+   * Edge has just started and the worker woke this tab.
+   *
+   * The flag lives in chrome.storage rather than sessionStorage because a
+   * fresh browser has no sessionStorage to read. It is claimed before it is
+   * used, so two tabs on the same site cannot both take it.
+   */
+  async function claimAutoStart() {
+    const { autoStartPending } = await chrome.storage.local.get('autoStartPending');
+    if (!autoStartPending) return;
+
+    await chrome.storage.local.set({ autoStartPending: false });
+    setStatus('Auto-start: the browser has just started. Joining.');
+
+    // runAttempt's own in-queue guard covers the case where we are already
+    // through, so there is nothing to check here.
+    sessionStorage.setItem(KEY_ACTIVE, '1');
+    sessionStorage.setItem(KEY_ATTEMPTS, '0');
+  }
+
   // ---------------------------------------------------------------- schedule
 
   const SCHEDULE_TICK_MS = 1000;
@@ -305,9 +378,25 @@
   beat();
   setInterval(beat, HEARTBEAT_MS);
 
-  // Resume automatically after the reload we triggered ourselves.
-  runAttempt();
-  watchCount();
+  /**
+   * Every page load comes through here, whether it is the first of the night,
+   * one the retry loop triggered, or the one the worker woke on browser start.
+   *
+   * Order matters: a page behind a Cloudflare challenge has no button to find
+   * and no position to read, so anything that runs before the check would
+   * spend its attempts on a page that cannot answer.
+   */
+  async function boot() {
+    if (await guardChallenge()) return;
+
+    await claimAutoStart();
+
+    // Resume automatically after the reload we triggered ourselves.
+    runAttempt();
+    watchCount();
+  }
+
+  boot();
 
   // An arm has to survive the reloads and outlive any one page.
   chrome.storage.local.get('scheduleArmed').then(({ scheduleArmed }) => {

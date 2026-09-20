@@ -19,6 +19,10 @@
   #when { font: inherit; width: 100%; box-sizing: border-box; padding: 4px; margin-bottom: 6px; }
   #countdown { margin-top: 6px; color: #666; line-height: 1.4; }
   #countdown.armed { color: #076; font-weight: 600; }
+  #launch { margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd; }
+  #launch label { display: flex; gap: 6px; align-items: flex-start; color: #444; cursor: pointer; }
+  #launch .hint { margin-top: 4px; color: #888; line-height: 1.4; }
+  #challenge { margin-top: 8px; color: #b00; font-weight: 600; line-height: 1.4; }
 </style>
 <h1>Queue Refresh</h1>
 <button id="start">Start</button>
@@ -38,5 +42,10 @@
   <button id="disarm">Disarm</button>
   <div id="countdown">Not armed.</div>
 </div>
+<div id="launch">
+  <label><input type="checkbox" id="auto-start"> Join when the browser starts</label>
+  <div class="hint">Wakes the pinned queue tab and joins. Leave the tab pinned.</div>
+</div>
+<div id="challenge"></div>
 <script src="schedule.js"></script>
 <script src="popup.js"></script>

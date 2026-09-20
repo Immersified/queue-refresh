@@ -239,19 +239,29 @@ const siteMatches = () => chrome.runtime.getManifest().content_scripts[0].matche
  * Bringing the tab forward is not cosmetic: a screenshot can only capture the
  * visible tab, and a background tab has its timers throttled to once a minute.
  */
-async function revive(reason) {
+async function revive(reason, { allowCreate = true } = {}) {
   const { lastSeenUrl } = await chrome.storage.local.get('lastSeenUrl');
-  await chrome.storage.local.set({ watchdogRevivedAt: Date.now() });
-
   const tabs = await chrome.tabs.query({ url: siteMatches() });
 
   if (!tabs.length) {
+    // Straight after a browser start the tab strip is rebuilt before the tabs
+    // can be queried. Opening lastSeenUrl here would leave a second tab beside
+    // the pinned one the moment it comes back, so that path says nothing and
+    // waits for the next watchdog tick, by which time the tabs are there.
+    if (!allowCreate) {
+      return setWatchdogStatus(`${reason}, but the tabs are not back yet. Waiting.`);
+    }
     if (!lastSeenUrl) {
       return setWatchdogStatus(`${reason}, but no queue tab and no URL to reopen.`);
     }
+    await chrome.storage.local.set({ watchdogRevivedAt: Date.now() });
     await chrome.tabs.create({ url: lastSeenUrl, active: true });
     return setWatchdogStatus(`${reason}. Reopened ${lastSeenUrl}`);
   }
+
+  // Set only once we are actually acting, so a tick that did nothing does not
+  // spend the cooldown that the next real attempt needs.
+  await chrome.storage.local.set({ watchdogRevivedAt: Date.now() });
 
   const [tab] = tabs;
   await chrome.windows.update(tab.windowId, { focused: true }).catch(() => null);
@@ -269,12 +279,15 @@ async function checkAlive() {
   const store = await chrome.storage.local.get([
     'logActive',
     'scheduleArmed',
+    'autoStartPending',
     'pageHeartbeatAt',
     'watchdogRevivedAt'
   ]);
 
-  // Nothing is depending on the page, so a quiet one is not a problem.
-  if (!store.logActive && !store.scheduleArmed) return;
+  // Nothing is depending on the page, so a quiet one is not a problem. An
+  // unclaimed auto-start counts: it means the browser started, the tab has not
+  // woken up yet, and something has to keep trying.
+  if (!store.logActive && !store.scheduleArmed && !store.autoStartPending) return;
 
   const due = shouldRevive({
     heartbeatAt: store.pageHeartbeatAt,
@@ -293,6 +306,53 @@ async function checkAlive() {
 // Alarms keep firing when page timers do not, which is the whole point of
 // putting the watchdog here rather than in the page it is watching.
 chrome.alarms.create(WATCHDOG, { periodInMinutes: 1 });
+
+// ----------------------------------------------------------------- autostart
+
+/**
+ * Edge has just started.
+ *
+ * The queue tab is pinned, so it comes back -- but a restored tab is an empty
+ * placeholder until something activates it. That is why it has always needed a
+ * click, and chrome.tabs.update({active: true}) is that click, in code. No
+ * separate program and no screen coordinates: the pinned tab also carries the
+ * campaign URL, so a campaign that changes needs nothing changed here.
+ *
+ * The first attempt usually finds no tabs at all, because the tab strip is
+ * rebuilt before the tabs can be queried. The watchdog covers that: an
+ * unclaimed autoStartPending keeps it awake until the tab answers.
+ */
+async function startOnLaunch() {
+  const { autoStart } = await chrome.storage.local.get('autoStart');
+  if (!autoStart) return;
+
+  await chrome.storage.local.set({ autoStartPending: true });
+  await setStatus('Browser started. Waking the queue tab.');
+  await revive('Browser started', { allowCreate: false });
+}
+
+chrome.runtime.onStartup.addListener(startOnLaunch);
+
+// ---------------------------------------------------------------- cloudflare
+
+/**
+ * The page is behind a Cloudflare interstitial. Nothing here can clear it, so
+ * the only useful thing is to say so loudly enough to wake somebody.
+ */
+async function reportChallenge(tabId) {
+  await chrome.storage.local.set({ challengeAt: Date.now() });
+  await setStatus('Cloudflare is asking for verification. Stopped until it is cleared.');
+  await notify(
+    'Queue Refresh\nCloudflare is asking you to verify.\n' +
+      'The run is stopped until you clear it by hand.',
+    { silent: false }
+  );
+
+  // Worth trying even though it only lands when a session is already running:
+  // a picture of the challenge is how you find out which kind it was without
+  // having been there. takeShot parks its own reason in the popup otherwise.
+  if (tabId !== undefined) await takeShot(tabId, { scheduled: false });
+}
 
 // ------------------------------------------------------------------ schedule
 
@@ -336,6 +396,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     takeShot(sender.tab.id, { scheduled: false }).then(done);
   }
   else if (message.type === 'log-stop') stopSession(message.reason).then(done);
+  else if (message.type === 'challenge') {
+    reportChallenge(sender.tab && sender.tab.id).then(done);
+  }
   else if (message.type === 'schedule-set') {
     chrome.alarms.create(ALARM, { when: message.at });
     done();

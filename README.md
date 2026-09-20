@@ -60,6 +60,7 @@ committing never overwrites your settings. Edit `.env`, never the generated file
 | **Stop logging** | Ends the logging only, leaving the retry loop alone |
 | **Test shot** | Takes a screenshot right now, so you can prove capture works without waiting for the interval |
 | **Arm** | Joins when the clock reaches the time you picked, then logs once through |
+| **Join when the browser starts** | A tickbox, not a button. Wakes the pinned queue tab on launch and joins. For a cold launch from Task Scheduler |
 | **Disarm** | Cancels it |
 
 The popup shows the status, your position (or the queue length before you join),
@@ -298,12 +299,16 @@ restored this way is an empty placeholder with no content script in it.
 **Launch Edge with occlusion detection off.** `windows/start-edge.bat`:
 
 ```
-windows\start-edge.bat "https://feather.openai.com/campaigns/<id>?tab=tasks"
+windows\start-edge.bat
 ```
 
 `--disable-features=CalculateNativeWinOcclusion` is the one that counts: it stops
-Edge concluding the window is hidden. Passing the URL on the command line also
-sidesteps lazy session restore, because the page is loaded rather than restored.
+Edge concluding the window is hidden.
+
+Run it with **no arguments**. Edge then restores its pinned tabs, and the pinned
+Mercor tab is the campaign page. A URL can still be passed for a one-off on a
+different page, but the pinned tab is the normal route — see
+[Cold launch](#cold-launch).
 
 **Disconnect, never log off.** Logging off ends the session and closes Edge.
 Even disconnecting cleanly leaves no display, so use
@@ -332,13 +337,114 @@ worker checks every minute on a `chrome.alarms` tick, which keeps firing when
 page timers do not, and after three minutes of silence it brings the tab to the
 front and reloads it.
 
-It only watches while a logging session is running or a schedule is armed, waits
-three minutes between attempts so it cannot sit in a reload loop, and reopens the
-last known queue URL if the tab has gone entirely.
+It only watches while a logging session is running, a schedule is armed, or a
+browser-start join is still waiting for its tab, waits three minutes between
+attempts so it cannot sit in a reload loop, and reopens the last known queue URL
+if the tab has gone entirely.
 
 The result is in the popup, and Telegram gets a loud message if it fires. A
 revive in the log means the settings above are not right yet: the watchdog is a
 net, not a fix.
+
+## Cold launch
+
+A tab that has been open all day is the problem the rest of this file keeps
+working around. The alternative is not to have one: launch Edge fresh a few
+minutes before the join, and let it join on its way up.
+
+Three pieces, and only one of them is new:
+
+| Piece | Job |
+| --- | --- |
+| **Task Scheduler** | Runs `start-edge.bat` at the time you set. Built into Windows |
+| **The pinned Mercor tab** | Holds the campaign URL and comes back when Edge restores |
+| **Join when the browser starts** | The popup tickbox. Wakes that tab and joins |
+
+```
+windows\schedule-launch.bat 05:45          once, at the next 05:45
+windows\schedule-launch.bat 05:45 daily    every day
+windows\schedule-launch.bat /delete        remove it
+```
+
+Then tick **Join when the browser starts** in the popup, once. It is stored, so
+it survives restarts, and it stays on until you untick it.
+
+### Why the pinned tab, and not a URL somewhere
+
+Because the campaign changes and the pinned tab is already how you deal with
+that. Open the new campaign in the pinned tab and the update is done: no
+`.env`, no `node build.js`, no extension reload, no scheduled task to edit.
+Nothing in the repo holds a campaign URL, which is the point.
+
+### Why it does not need a program to click the tab
+
+A restored pinned tab is an empty placeholder until something activates it,
+which is why it has always needed a click to come alive. That click is two
+lines in the service worker:
+
+```js
+await chrome.tabs.update(tab.id, { active: true });
+await chrome.tabs.reload(tab.id);
+```
+
+Same code the watchdog already used to revive a dead page. No second program,
+no screen coordinates, nothing that breaks when the screen resolution changes.
+
+### The order it happens in
+
+1. Task Scheduler runs `start-edge.bat`, with no URL.
+2. Edge starts and restores the pinned tabs.
+3. `chrome.runtime.onStartup` fires. If the tickbox is on, it sets a pending
+   flag and tries to wake the tab.
+4. That first try usually finds nothing: the tab strip is rebuilt before the
+   tabs can be queried. It says so and waits rather than opening a second tab.
+5. The watchdog tick, a minute later, finds the tab and wakes it.
+6. The content script loads, claims the pending flag, and joins.
+
+The flag is claimed before it is used, so the join can only happen once however
+many times the tab reloads. If you were already in the queue, the retry loop's
+own guard catches it and logging starts instead.
+
+## Cloudflare
+
+Cloudflare sometimes puts a "verify you are human" page in front of the campaign.
+It cannot be clicked past from here, and the extension does not try:
+
+- The checkbox is in a **cross-origin iframe** the content script cannot reach.
+- A scripted click carries `isTrusted: false`, which the widget rejects.
+- The checkbox is only the visible part of a fingerprinting check anyway.
+
+What it does instead is **notice**. Before anything else on a page load, the
+content script checks for an interstitial. Left alone it would look like a page
+that is merely slow, and the retry loop would reload into it until it ran out of
+attempts — a night lost in silence.
+
+On a hit it stops the loop, does **not** reload (reloading is what turns one
+challenge into a run of them), sends a loud Telegram, and tries for a screenshot.
+
+An arm is left alone, so clearing the challenge before the scheduled time means
+the night still happens.
+
+### The eight-second wait
+
+The automatic challenge passes itself in a few seconds and takes the page with
+it. Only the kind that waits for a human is worth waking anyone up for, so a
+suspected challenge gets eight seconds to resolve before anything is reported.
+
+### What seems to trigger it
+
+Worth knowing, because avoiding it beats detecting it:
+
+| Trigger | Notes |
+| --- | --- |
+| **`tscon` to the console** | Changes the display mid-session. `screen.width`, `screen.height` and `devicePixelRatio` all jump at once, which reads as a headless browser |
+| **Datacenter IP** | A VPS gets far more scrutiny than a home connection |
+| **A fresh profile** | No `cf_clearance` cookie yet. A persistent profile usually walks straight through |
+
+The first one is worth testing: disconnect RDP normally, without
+`keep-session-alive.bat`, and see whether `log.csv` keeps growing. If it does,
+`tscon` was not needed and the challenge goes away with it. If it does not, match
+your RDP resolution to the console's before disconnecting so nothing jumps.
 
 ## Scheduled start
 
@@ -460,12 +566,14 @@ stable handle, so no manual setup is needed.
 | `src/queue-count.js` | Reads the "N experts currently waiting" line off the page |
 | `src/queue-position.js` | Reads the "Position 412 of 456" line off the page |
 | `src/queue-exit.js` | Spots the two ways a queue run ends |
+| `src/challenge.js` | Spots a Cloudflare interstitial in front of the page |
 | `src/csv.js` | Builds the CSV text and names each session folder |
 | `src/schedule.js` | Reads the picked time and counts down to it |
 | `src/telegram.js` | Builds the text that goes to your phone |
 | `src/watchdog.js` | Decides when a silent page needs reloading |
 | `check-telegram.js` | Sends one test message to prove the bot works |
 | `windows/start-edge.bat` | Launches Edge with the flags that survive a disconnect |
+| `windows/schedule-launch.bat` | Registers the Task Scheduler job that runs it |
 | `windows/keep-session-alive.bat` | Disconnects RDP without taking the desktop away |
 | `windows/edge-policies.reg` | Turns off sleeping tabs and efficiency mode |
 | `src/interceptor.js` | Wraps `fetch` and `XMLHttpRequest` in the page |
