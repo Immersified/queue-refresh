@@ -16,6 +16,12 @@
   const logger = globalThis.__queueRefreshLogger;
   const schedule = globalThis.__queueRefreshSchedule;
   const challenge = globalThis.__queueRefreshChallenge;
+  // Added to manifest.template.json after the first release, so a folder that
+  // was pulled but not rebuilt has an old manifest.json that never loads it.
+  // Say which command fixes it rather than failing on a TypeError later.
+  if (!challenge) {
+    throw new Error('[Queue Refresh] src/challenge.js is not loaded. Run: node build.js');
+  }
 
   // Set in .env, written into src/config.js by build.js.
   const settings = globalThis.QUEUE_REFRESH_CONFIG;

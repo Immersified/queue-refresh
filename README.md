@@ -368,14 +368,58 @@ Three pieces, and only one of them is new:
 | **The pinned Mercor tab** | Holds the campaign URL and comes back when Edge restores |
 | **Join when the browser starts** | The popup tickbox. Wakes that tab and joins |
 
+### Setting it up
+
+Once, on the machine that runs the queue. Steps 1 to 3 are the ordinary update
+routine; the rest is the new part.
+
+**1. Get the code.**
+
+```
+git pull
+```
+
+**2. Rebuild.** Not optional this time. `manifest.template.json` gained a file,
+so an old `manifest.json` will not load it.
+
+```
+node build.js
+```
+
+**3. Reload.** The reload arrow on the card in `edge://extensions`, then reload
+the queue page.
+
+**4. Pin the campaign tab.** Right-click the tab -> **Pin**. This is the only
+place the campaign URL lives, so when the campaign changes, open the new link
+in this tab and the update is done.
+
+**5. Tick "Join when the browser starts"** in the popup. Stored, so it survives
+restarts and stays on until you untick it.
+
+**6. Schedule the launch.**
+
 ```
 windows\schedule-launch.bat 05:45          once, at the next 05:45
 windows\schedule-launch.bat 05:45 daily    every day
 windows\schedule-launch.bat /delete        remove it
 ```
 
-Then tick **Join when the browser starts** in the popup, once. It is stored, so
-it survives restarts, and it stays on until you untick it.
+Give it a few minutes' head start: the tab usually wakes on the watchdog tick
+about a minute after Edge opens.
+
+**7. Stop using `keep-session-alive.bat`.** Just close the RDP window.
+
+### Checking it worked
+
+Without waiting for the morning:
+
+```
+windows\schedule-launch.bat          shows the scheduled task, or says there is none
+```
+
+Then close Edge and run `windows\start-edge.bat` by hand. The pinned tab should
+come forward and start clicking within about a minute, and the popup status
+should say `Auto-start: the browser has just started. Joining.`
 
 ### Why the pinned tab, and not a URL somewhere
 
