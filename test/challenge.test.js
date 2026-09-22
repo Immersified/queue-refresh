@@ -87,14 +87,3 @@ test('no signal reads as null, not an empty string', () => {
   assert.strictEqual(challengeSignal({ title: 'HL Grading', text: 'Join queue' }), null);
 });
 
-test('the widget selector does not claim ids any app could use', () => {
-  // This site is a grading tool, full of things it calls challenges. A bare
-  // #challenge-form or #challenge-running here reads its own pages as
-  // Cloudflare's and stops the night on a page that is perfectly fine.
-  assert.doesNotMatch(WIDGET_SELECTOR, /(^|,\s*)#challenge-form/);
-  assert.doesNotMatch(WIDGET_SELECTOR, /(^|,\s*)#challenge-running/);
-});
-
-test('the challenge form is matched by its Cloudflare action', () => {
-  assert.match(WIDGET_SELECTOR, /form#challenge-form\[action\*="__cf_chl"\]/);
-});

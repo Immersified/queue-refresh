@@ -518,10 +518,6 @@ would do by pressing F5, except it carries on doing it at four in the morning.
 | Rendered, no button (some other page) | Stops, as before |
 | Cloudflare interstitial | Stops and sends a loud Telegram. See [Cloudflare](#cloudflare) |
 
-Reloading is not free: every reload is a request Cloudflare counts, and a run of
-them is a good way to be handed a challenge. That is why the cap is low, and why
-a page showing any challenge signal is never reloaded.
-
 Three things keep it from becoming a reload loop:
 
 - **A blank page has to be truly empty.** Any readable text means the page
@@ -565,36 +561,39 @@ The run is stopped until you clear it by hand.
 Spotted by the page title (Just a moment...).
 ```
 
-### What counts as Cloudflare, and what does not
+### The minute it gets first
 
-Any one of three signals is enough, because Cloudflare's challenge pages do not
-agree on which they show:
+The automatic challenge passes itself and takes the page with it. Only the kind
+that waits for a human is worth waking anyone up for, so a suspected challenge
+gets **up to a minute** to resolve before anything is reported.
 
-| Signal | Example |
+It is checked every second during that minute, not once at the end, so a
+challenge that clears in two seconds costs two seconds. And when it clears the
+usual way — by navigating the page away — the script asking the question is
+gone before it can report anything at all.
+
+This was eight seconds until 22 September 2026, when one cleared by itself, the
+campaign page came back normally, and the report had already gone out: a loud
+Telegram, a stopped run and a red banner over a page that was fine. Waiting on a
+real challenge costs a minute. Reporting one that would have cleared costs the
+night.
+
+### When it clears anyway
+
+A challenge can still pass just after the minute runs out, so the report is not
+the last word on it.
+
+On the next page load, if nothing challenge-shaped is there any more, the
+extension waits for the page to prove itself — a **Join queue** button, or a
+position — and then takes the stop back: the banner comes down, a quiet Telegram
+says so, and the loop carries on where it left off.
+
+| | |
 | --- | --- |
-| The page title | `Just a moment...` |
-| The wording on the page | `Verify you are human`, `Checking your browser` |
-| Cloudflare's own markup | `.cf-turnstile`, the `challenges.cloudflare.com` iframe, a form whose action carries `__cf_chl` |
-
-Every selector has to be Cloudflare's and nobody else's. A bare
-`#challenge-form` or `#challenge-running` is an id any app might use — and this
-is a grading site, full of things it calls challenges — so the form is matched
-by its Cloudflare action instead. Matching on the id alone reads the site's own
-pages as Cloudflare's and ends the night on a page that was fine.
-
-A blank page is **not** a challenge signal. It is handled by [reloading](#when-the-page-comes-back-blank),
-and the challenge check runs once more before each of those reloads: a Turnstile
-widget dropped into a live page reads as blank, because the widget's own text
-sits inside its iframe.
-
-An arm is left alone, so clearing the challenge before the scheduled time means
-the night still happens.
-
-### The eight-second wait
-
-The automatic challenge passes itself in a few seconds and takes the page with
-it. Only the kind that waits for a human is worth waking anyone up for, so a
-suspected challenge gets eight seconds to resolve before anything is reported.
+| Page proves itself | Banner cleared, loop resumes |
+| Page still not back | Stays stopped, and says so |
+| Stopped by **you** | Never resumed. Cloudflare's stop is the only one this undoes |
+| Cleared and came back 4 times | Stays stopped. Something that keeps returning is not clearing itself |
 
 ### What seems to trigger it
 
@@ -692,6 +691,7 @@ Press **Test shot** to trigger a capture immediately. Common answers:
 | --- | --- |
 | `the queue tab is not the visible tab in its window` | Bring the tab to the front. Capture only ever sees the visible tab |
 | `No session running` | Press **Start** or **Log only** first |
+| `Failed to capture tab: image readback failed` | Nothing was composited to read: the page was mid-navigation, or the tab had only just come forward. Retried once automatically, and this is what is left when the retry fails too |
 | `Either the '<all_urls>' or 'activeTab' permission is required` | You are on an old build. `git pull`, `node build.js`, reload the extension |
 
 ### Why the extension asks for all sites

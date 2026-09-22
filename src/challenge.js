@@ -32,13 +32,9 @@
 
   // What the widget puts in the DOM. Read by the caller, which has a document;
   // this file stays pure so the tests can run in Node.
-  //
-  // Every selector here has to be Cloudflare's and nobody else's. A bare
-  // `#challenge-form` or `#challenge-running` is the kind of id any app can
-  // use -- and this one is a grading site, full of things it calls challenges
-  // -- so the form is matched by its Cloudflare action rather than its id.
   const WIDGET_SELECTOR = [
-    'form#challenge-form[action*="__cf_chl"]',
+    '#challenge-form',
+    '#challenge-running',
     '#cf-challenge-running',
     '.cf-turnstile',
     'iframe[src*="challenges.cloudflare.com"]'

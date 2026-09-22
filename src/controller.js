@@ -13,6 +13,10 @@
   const KEY_ACTIVE = 'queueRefresh.active';
   const KEY_ATTEMPTS = 'queueRefresh.attempts';
   const KEY_BLANKS = 'queueRefresh.blanks';
+  // Why the loop stopped, so a stop that was Cloudflare's doing can be undone
+  // when Cloudflare goes away, and one you asked for cannot.
+  const KEY_HALTED_BY = 'queueRefresh.haltedBy';
+  const KEY_RESUMES = 'queueRefresh.challengeResumes';
 
   const logger = globalThis.__queueRefreshLogger;
   const schedule = globalThis.__queueRefreshSchedule;
@@ -164,15 +168,7 @@
       // Nothing rendered at all: reload rather than end the night on a page
       // that never got the chance to answer. A page that did render, but has
       // no button, is a different page and still stops the loop.
-      if (blank.isBlankPage(pageText())) {
-        // Checked again here, not just at boot. A page can have a Turnstile
-        // widget dropped into it while we were waiting, and it would read as
-        // blank because the widget's own text lives inside its iframe.
-        // Reloading into a challenge is how one challenge becomes a run.
-        if (await guardChallenge()) return;
-
-        return reloadBlankPage();
-      }
+      if (blank.isBlankPage(pageText())) return reloadBlankPage();
 
       return stop(`Stopped: no enabled "${BUTTON_LABEL}" button after ${BUTTON_TIMEOUT_MS / 1000}s.`);
     }
@@ -234,10 +230,21 @@
 
   // -------------------------------------------------------------- cloudflare
 
-  // The automatic challenge passes itself in a few seconds and takes the page
-  // with it. Only the kind that waits for a human is worth waking anyone up
-  // for, so the automatic one gets this long to finish first.
-  const CHALLENGE_GRACE_MS = 8000;
+  // The automatic challenge passes itself and takes the page with it. Only the
+  // kind that waits for a human is worth waking anyone up for, so the
+  // automatic one gets this long to finish first.
+  //
+  // Eight seconds was not enough. On 22 September 2026 one cleared by itself
+  // and the campaign page came back, but the report had already gone out and
+  // the night was over. Waiting on a real challenge costs a minute; reporting
+  // one that would have cleared costs the night, so the wait is the cheap side
+  // of that trade.
+  const CHALLENGE_GRACE_MS = 60000;
+  const CHALLENGE_POLL_MS = 1000;
+
+  // A challenge that keeps coming back is not clearing itself, whatever any
+  // one page looked like. After this many, the loop stays down.
+  const MAX_CHALLENGE_RESUMES = 3;
 
   /**
    * Is a Cloudflare interstitial standing in front of the page right now?
@@ -266,6 +273,7 @@
    */
   function haltForChallenge(signal) {
     sessionStorage.setItem(KEY_ACTIVE, '0');
+    sessionStorage.setItem(KEY_HALTED_BY, 'challenge');
     setStatus(`Cloudflare is asking for verification, going by ${signal}. Stopped; clear it by hand.`);
     chrome.runtime.sendMessage({ type: 'challenge', signal }).catch(() => null);
   }
@@ -274,16 +282,59 @@
   async function guardChallenge() {
     if (!challengeBlocking()) return false;
 
-    setStatus('Cloudflare check on the page. Giving it a moment to pass by itself.');
-    await sleep(CHALLENGE_GRACE_MS);
+    setStatus('Cloudflare check on the page. Giving it up to a minute to pass by itself.');
 
-    // Read again after the wait: the automatic challenge passes itself, and
-    // what it fired on the second time is what gets reported.
+    // Polled rather than slept through: the moment it clears we carry on, and
+    // if it clears the way it usually does -- by navigating the page away --
+    // this script is gone before it can report anything at all.
+    const deadline = Date.now() + CHALLENGE_GRACE_MS;
+    while (Date.now() < deadline) {
+      await sleep(CHALLENGE_POLL_MS);
+      if (!challengeBlocking()) return false;
+    }
+
+    // Still there after a full minute, so it is the kind that waits for a
+    // human. What it fired on now is what gets reported.
     const signal = challengeBlocking();
     if (!signal) return false;
 
     haltForChallenge(signal);
     return true;
+  }
+
+  /**
+   * Last time round, Cloudflare stopped the loop. If the page is back, that
+   * stop was a mistake nobody asked for, so take it back.
+   *
+   * The page has to prove itself first: an empty page and a challenge page
+   * look much the same, so this waits for a Join button (or a position) the
+   * same way an attempt would, and stays stopped if neither turns up.
+   */
+  async function resumeAfterChallenge() {
+    setStatus('Cloudflare stopped the last run. Waiting to see if the page is back.');
+
+    const button = await waitForButton();
+    if (!button && !alreadyInQueue()) {
+      return setStatus('Cloudflare stopped the last run and the page is still not back.');
+    }
+
+    sessionStorage.removeItem(KEY_HALTED_BY);
+    chrome.runtime.sendMessage({ type: 'challenge-cleared' }).catch(() => null);
+
+    const resumes = Number(sessionStorage.getItem(KEY_RESUMES) || '0') + 1;
+    sessionStorage.setItem(KEY_RESUMES, String(resumes));
+
+    if (resumes > MAX_CHALLENGE_RESUMES) {
+      return setStatus(
+        `Cloudflare cleared itself again, ${resumes} times now. Left stopped; press Start.`
+      );
+    }
+
+    sessionStorage.setItem(KEY_ACTIVE, '1');
+    setStatus(
+      `Cloudflare cleared itself and the page is back. Carrying on ` +
+        `(${resumes} of ${MAX_CHALLENGE_RESUMES}).`
+    );
   }
 
   // --------------------------------------------------------------- autostart
@@ -401,6 +452,8 @@
     if (message.type === 'start') {
       sessionStorage.setItem(KEY_ACTIVE, '1');
       sessionStorage.setItem(KEY_ATTEMPTS, '0');
+      sessionStorage.setItem(KEY_RESUMES, '0');
+      sessionStorage.removeItem(KEY_HALTED_BY);
       runAttempt();
     }
     if (message.type === 'log-only') {
@@ -410,6 +463,8 @@
     }
     if (message.type === 'stop') {
       logger.stop();
+      // Yours, not Cloudflare's, so nothing may undo it later.
+      sessionStorage.removeItem(KEY_HALTED_BY);
       stop('Stopped by you.');
     }
     if (message.type === 'stop-logging') {
@@ -454,6 +509,12 @@
     if (await guardChallenge()) return;
 
     await claimAutoStart();
+
+    // Nothing above found a challenge, so if one stopped the last run it has
+    // gone. Take the stop back, if the page can show it is really back.
+    if (sessionStorage.getItem(KEY_HALTED_BY) === 'challenge') {
+      await resumeAfterChallenge();
+    }
 
     // Resume automatically after the reload we triggered ourselves.
     runAttempt();

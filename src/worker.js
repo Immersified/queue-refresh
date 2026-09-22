@@ -110,6 +110,23 @@ async function addSample(sample) {
  * @param {boolean} scheduled false for a manual test shot, which must not
  *   reset the interval or the next real capture slips by a full period.
  */
+/**
+ * One retry, because "image readback failed" is what Chrome says when there
+ * was nothing composited to read: a page mid-navigation, or a tab that has
+ * only just come to the front. A second costs nothing and usually lands.
+ */
+async function capture(windowId) {
+  const shoot = () =>
+    chrome.tabs.captureVisibleTab(windowId, { format: 'jpeg', quality: 85 });
+
+  try {
+    return await shoot();
+  } catch (error) {
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    return shoot();
+  }
+}
+
 async function takeShot(tabId, { scheduled = true } = {}) {
   const store = await chrome.storage.local.get(['logSession', 'logShots']);
   if (!store.logSession) {
@@ -128,10 +145,7 @@ async function takeShot(tabId, { scheduled = true } = {}) {
       throw new Error('the queue tab is not the visible tab in its window');
     }
 
-    const image = await chrome.tabs.captureVisibleTab(tab.windowId, {
-      format: 'jpeg',
-      quality: 85
-    });
+    const image = await capture(tab.windowId);
 
     const now = new Date();
     const pad = (n) => String(n).padStart(2, '0');
@@ -355,6 +369,20 @@ async function reportChallenge(tabId, signal) {
   if (tabId !== undefined) await takeShot(tabId, { scheduled: false });
 }
 
+/**
+ * The page came back by itself. Take the red banner down, because a warning
+ * that is no longer true is worse than none: it is the one you learn to
+ * ignore. Quietly -- the loud message has already been sent.
+ */
+async function clearChallenge() {
+  const { challengeAt } = await chrome.storage.local.get('challengeAt');
+  if (!challengeAt) return;
+
+  await chrome.storage.local.set({ challengeAt: null, challengeSignal: null });
+  await setStatus('Cloudflare cleared itself. The page is back.');
+  await notify('Queue Refresh\nCloudflare cleared itself. Carrying on.');
+}
+
 // ------------------------------------------------------------------ schedule
 
 const ALARM = 'queue-refresh:schedule';
@@ -400,6 +428,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   else if (message.type === 'challenge') {
     reportChallenge(sender.tab && sender.tab.id, message.signal).then(done);
   }
+  else if (message.type === 'challenge-cleared') clearChallenge().then(done);
   else if (message.type === 'schedule-set') {
     chrome.alarms.create(ALARM, { when: message.at });
     done();
