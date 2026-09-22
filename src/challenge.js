@@ -32,9 +32,13 @@
 
   // What the widget puts in the DOM. Read by the caller, which has a document;
   // this file stays pure so the tests can run in Node.
+  //
+  // Every selector here has to be Cloudflare's and nobody else's. A bare
+  // `#challenge-form` or `#challenge-running` is the kind of id any app can
+  // use -- and this one is a grading site, full of things it calls challenges
+  // -- so the form is matched by its Cloudflare action rather than its id.
   const WIDGET_SELECTOR = [
-    '#challenge-form',
-    '#challenge-running',
+    'form#challenge-form[action*="__cf_chl"]',
     '#cf-challenge-running',
     '.cf-turnstile',
     'iframe[src*="challenges.cloudflare.com"]'
@@ -44,20 +48,30 @@
    * @param {string}  title     document.title
    * @param {string}  text      document.body.innerText
    * @param {boolean} hasWidget whether WIDGET_SELECTOR matched
-   * @returns {boolean}
+   * @returns {string|null} which signal fired, in words, or null for none.
    *
    * Any one signal is enough. Cloudflare serves several different challenge
    * pages and they do not agree on which of these they show, so requiring two
-   * would mean missing the ones that only ever offer one.
+   * would mean missing the ones that only ever offer one. That makes it worth
+   * saying which one fired: a report nobody can check is a report nobody can
+   * argue with.
    */
-  function isChallengePage({ title = '', text = '', hasWidget = false } = {}) {
-    if (hasWidget === true) return true;
-    if (typeof title === 'string' && TITLE.test(title)) return true;
-    return typeof text === 'string' && TEXT.test(text);
+  function challengeSignal({ title = '', text = '', hasWidget = false } = {}) {
+    if (hasWidget === true) return 'the Cloudflare widget in the page';
+    if (typeof title === 'string' && TITLE.test(title)) return `the page title (${title})`;
+    if (typeof text === 'string' && TEXT.test(text)) {
+      const match = TEXT.exec(text);
+      return `the wording on the page ("${match[0]}")`;
+    }
+    return null;
   }
 
-  root.__queueRefreshChallenge = { isChallengePage, WIDGET_SELECTOR };
+  function isChallengePage(page) {
+    return challengeSignal(page) !== null;
+  }
+
+  root.__queueRefreshChallenge = { isChallengePage, challengeSignal, WIDGET_SELECTOR };
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { isChallengePage, WIDGET_SELECTOR };
+    module.exports = { isChallengePage, challengeSignal, WIDGET_SELECTOR };
   }
 })(typeof globalThis !== 'undefined' ? globalThis : self);

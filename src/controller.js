@@ -164,7 +164,15 @@
       // Nothing rendered at all: reload rather than end the night on a page
       // that never got the chance to answer. A page that did render, but has
       // no button, is a different page and still stops the loop.
-      if (blank.isBlankPage(pageText())) return reloadBlankPage();
+      if (blank.isBlankPage(pageText())) {
+        // Checked again here, not just at boot. A page can have a Turnstile
+        // widget dropped into it while we were waiting, and it would read as
+        // blank because the widget's own text lives inside its iframe.
+        // Reloading into a challenge is how one challenge becomes a run.
+        if (await guardChallenge()) return;
+
+        return reloadBlankPage();
+      }
 
       return stop(`Stopped: no enabled "${BUTTON_LABEL}" button after ${BUTTON_TIMEOUT_MS / 1000}s.`);
     }
@@ -239,9 +247,9 @@
    * detector stays a pure function the tests can reach.
    */
   function challengeBlocking() {
-    if (alreadyInQueue() || findJoinButton()) return false;
+    if (alreadyInQueue() || findJoinButton()) return null;
 
-    return challenge.isChallengePage({
+    return challenge.challengeSignal({
       title: document.title,
       text: pageText(),
       hasWidget: Boolean(document.querySelector(challenge.WIDGET_SELECTOR))
@@ -256,10 +264,10 @@
    * arm, if there is one, is left alone: clear the challenge before it fires
    * and the night still happens.
    */
-  function haltForChallenge() {
+  function haltForChallenge(signal) {
     sessionStorage.setItem(KEY_ACTIVE, '0');
-    setStatus('Cloudflare is asking for verification. Stopped; clear it by hand.');
-    chrome.runtime.sendMessage({ type: 'challenge' }).catch(() => null);
+    setStatus(`Cloudflare is asking for verification, going by ${signal}. Stopped; clear it by hand.`);
+    chrome.runtime.sendMessage({ type: 'challenge', signal }).catch(() => null);
   }
 
   /** @returns {Promise<boolean>} true when the page is blocked and we stopped. */
@@ -268,9 +276,13 @@
 
     setStatus('Cloudflare check on the page. Giving it a moment to pass by itself.');
     await sleep(CHALLENGE_GRACE_MS);
-    if (!challengeBlocking()) return false;
 
-    haltForChallenge();
+    // Read again after the wait: the automatic challenge passes itself, and
+    // what it fired on the second time is what gets reported.
+    const signal = challengeBlocking();
+    if (!signal) return false;
+
+    haltForChallenge(signal);
     return true;
   }
 

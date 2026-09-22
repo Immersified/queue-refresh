@@ -339,12 +339,13 @@ chrome.runtime.onStartup.addListener(startOnLaunch);
  * The page is behind a Cloudflare interstitial. Nothing here can clear it, so
  * the only useful thing is to say so loudly enough to wake somebody.
  */
-async function reportChallenge(tabId) {
-  await chrome.storage.local.set({ challengeAt: Date.now() });
+async function reportChallenge(tabId, signal) {
+  const because = signal ? `\nSpotted by ${signal}.` : '';
+  await chrome.storage.local.set({ challengeAt: Date.now(), challengeSignal: signal ?? null });
   await setStatus('Cloudflare is asking for verification. Stopped until it is cleared.');
   await notify(
     'Queue Refresh\nCloudflare is asking you to verify.\n' +
-      'The run is stopped until you clear it by hand.',
+      `The run is stopped until you clear it by hand.${because}`,
     { silent: false }
   );
 
@@ -397,7 +398,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   else if (message.type === 'log-stop') stopSession(message.reason).then(done);
   else if (message.type === 'challenge') {
-    reportChallenge(sender.tab && sender.tab.id).then(done);
+    reportChallenge(sender.tab && sender.tab.id, message.signal).then(done);
   }
   else if (message.type === 'schedule-set') {
     chrome.alarms.create(ALARM, { when: message.at });

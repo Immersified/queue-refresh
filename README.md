@@ -518,6 +518,10 @@ would do by pressing F5, except it carries on doing it at four in the morning.
 | Rendered, no button (some other page) | Stops, as before |
 | Cloudflare interstitial | Stops and sends a loud Telegram. See [Cloudflare](#cloudflare) |
 
+Reloading is not free: every reload is a request Cloudflare counts, and a run of
+them is a good way to be handed a challenge. That is why the cap is low, and why
+a page showing any challenge signal is never reloaded.
+
 Three things keep it from becoming a reload loop:
 
 - **A blank page has to be truly empty.** Any readable text means the page
@@ -550,6 +554,38 @@ attempts — a night lost in silence.
 
 On a hit it stops the loop, does **not** reload (reloading is what turns one
 challenge into a run of them), sends a loud Telegram, and tries for a screenshot.
+
+The message names the signal it went on, because a report nobody can check is a
+report nobody can argue with:
+
+```
+Queue Refresh
+Cloudflare is asking you to verify.
+The run is stopped until you clear it by hand.
+Spotted by the page title (Just a moment...).
+```
+
+### What counts as Cloudflare, and what does not
+
+Any one of three signals is enough, because Cloudflare's challenge pages do not
+agree on which they show:
+
+| Signal | Example |
+| --- | --- |
+| The page title | `Just a moment...` |
+| The wording on the page | `Verify you are human`, `Checking your browser` |
+| Cloudflare's own markup | `.cf-turnstile`, the `challenges.cloudflare.com` iframe, a form whose action carries `__cf_chl` |
+
+Every selector has to be Cloudflare's and nobody else's. A bare
+`#challenge-form` or `#challenge-running` is an id any app might use — and this
+is a grading site, full of things it calls challenges — so the form is matched
+by its Cloudflare action instead. Matching on the id alone reads the site's own
+pages as Cloudflare's and ends the night on a page that was fine.
+
+A blank page is **not** a challenge signal. It is handled by [reloading](#when-the-page-comes-back-blank),
+and the challenge check runs once more before each of those reloads: a Turnstile
+widget dropped into a live page reads as blank, because the widget's own text
+sits inside its iframe.
 
 An arm is left alone, so clearing the challenge before the scheduled time means
 the night still happens.

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { isChallengePage, WIDGET_SELECTOR } = require('../src/challenge.js');
+const { isChallengePage, challengeSignal, WIDGET_SELECTOR } = require('../src/challenge.js');
 
 test('spots the classic interstitial by its title', () => {
   assert.strictEqual(isChallengePage({ title: 'Just a moment...' }), true);
@@ -72,4 +72,29 @@ test('hasWidget only counts when it is really true', () => {
 
 test('the widget selector covers the iframe Cloudflare actually renders', () => {
   assert.match(WIDGET_SELECTOR, /challenges\.cloudflare\.com/);
+});
+
+test('says which signal fired, so a report can be checked', () => {
+  assert.match(challengeSignal({ hasWidget: true }), /widget/);
+  assert.match(challengeSignal({ title: 'Just a moment...' }), /Just a moment/);
+  assert.match(
+    challengeSignal({ text: 'Please verify you are human' }),
+    /verify you are human/
+  );
+});
+
+test('no signal reads as null, not an empty string', () => {
+  assert.strictEqual(challengeSignal({ title: 'HL Grading', text: 'Join queue' }), null);
+});
+
+test('the widget selector does not claim ids any app could use', () => {
+  // This site is a grading tool, full of things it calls challenges. A bare
+  // #challenge-form or #challenge-running here reads its own pages as
+  // Cloudflare's and stops the night on a page that is perfectly fine.
+  assert.doesNotMatch(WIDGET_SELECTOR, /(^|,\s*)#challenge-form/);
+  assert.doesNotMatch(WIDGET_SELECTOR, /(^|,\s*)#challenge-running/);
+});
+
+test('the challenge form is matched by its Cloudflare action', () => {
+  assert.match(WIDGET_SELECTOR, /form#challenge-form\[action\*="__cf_chl"\]/);
 });
