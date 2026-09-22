@@ -12,15 +12,20 @@
 
   const KEY_ACTIVE = 'queueRefresh.active';
   const KEY_ATTEMPTS = 'queueRefresh.attempts';
+  const KEY_BLANKS = 'queueRefresh.blanks';
 
   const logger = globalThis.__queueRefreshLogger;
   const schedule = globalThis.__queueRefreshSchedule;
   const challenge = globalThis.__queueRefreshChallenge;
+  const blank = globalThis.__queueRefreshBlank;
   // Added to manifest.template.json after the first release, so a folder that
   // was pulled but not rebuilt has an old manifest.json that never loads it.
   // Say which command fixes it rather than failing on a TypeError later.
   if (!challenge) {
     throw new Error('[Queue Refresh] src/challenge.js is not loaded. Run: node build.js');
+  }
+  if (!blank) {
+    throw new Error('[Queue Refresh] src/blank.js is not loaded. Run: node build.js');
   }
 
   // Set in .env, written into src/config.js by build.js.
@@ -37,6 +42,12 @@
 
   const BUTTON_TIMEOUT_MS = 30000;
   const POLL_INTERVAL_MS = 250;
+
+  // A blank page costs the button timeout plus a retry delay, so this is about
+  // twelve minutes of an empty page before the loop gives up on it. Bounded
+  // because reloading forever is how one Cloudflare challenge becomes a run of
+  // them, and a site that is truly down will not come back by being asked.
+  const MAX_BLANK_RELOADS = 20;
 
   // The count is rendered by the app, so it arrives after the script does.
   const COUNT_TIMEOUT_MS = 20000;
@@ -67,6 +78,8 @@
   }
 
   const findJoinButton = () => findButton(BUTTON_LABEL);
+
+  const pageText = () => (document.body ? document.body.innerText : '');
 
   /**
    * Two signals, either of which is enough: the "Position N of M" line, and a
@@ -134,7 +147,6 @@
     }
 
     const attempt = Number(sessionStorage.getItem(KEY_ATTEMPTS) || '0') + 1;
-    sessionStorage.setItem(KEY_ATTEMPTS, String(attempt));
 
     if (attempt > MAX_ATTEMPTS) {
       return stop(`Stopped: hit the ${MAX_ATTEMPTS} attempt limit.`);
@@ -149,8 +161,18 @@
     setStatus(`Attempt ${attempt}: looking for the "${BUTTON_LABEL}" button.`);
     const button = await waitForButton();
     if (!button) {
+      // Nothing rendered at all: reload rather than end the night on a page
+      // that never got the chance to answer. A page that did render, but has
+      // no button, is a different page and still stops the loop.
+      if (blank.isBlankPage(pageText())) return reloadBlankPage();
+
       return stop(`Stopped: no enabled "${BUTTON_LABEL}" button after ${BUTTON_TIMEOUT_MS / 1000}s.`);
     }
+
+    // Counted here, not on arrival, so the attempt budget is spent on clicks:
+    // a run of blank pages must not use up the night's attempts.
+    sessionStorage.setItem(KEY_ATTEMPTS, String(attempt));
+    sessionStorage.setItem(KEY_BLANKS, '0');
 
     const result = waitForResult();
     button.click();
@@ -178,6 +200,30 @@
     return stop(`Stopped on attempt ${attempt}:${detail}`);
   }
 
+  /**
+   * The page came back blank. Press F5, in effect, and keep the loop alive.
+   *
+   * Counted separately from the attempts, because no click happened, and
+   * counted consecutively: a page that renders again resets it, so a bad patch
+   * in the middle of a long night does not end it.
+   */
+  function reloadBlankPage() {
+    const blanks = Number(sessionStorage.getItem(KEY_BLANKS) || '0') + 1;
+    sessionStorage.setItem(KEY_BLANKS, String(blanks));
+
+    if (blanks > MAX_BLANK_RELOADS) {
+      return stop(`Stopped: the page came back blank ${MAX_BLANK_RELOADS} times in a row.`);
+    }
+
+    const wait = nextRetryDelay();
+    setStatus(
+      `Blank page (${blanks} of ${MAX_BLANK_RELOADS}). Refreshing in ${(wait / 1000).toFixed(1)}s.`
+    );
+    setTimeout(() => {
+      if (isActive()) location.reload();
+    }, wait);
+  }
+
   // -------------------------------------------------------------- cloudflare
 
   // The automatic challenge passes itself in a few seconds and takes the page
@@ -197,7 +243,7 @@
 
     return challenge.isChallengePage({
       title: document.title,
-      text: document.body ? document.body.innerText : '',
+      text: pageText(),
       hasWidget: Boolean(document.querySelector(challenge.WIDGET_SELECTOR))
     });
   }

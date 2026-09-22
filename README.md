@@ -11,7 +11,10 @@ No third-party tools. Chrome loads it directly.
 2. Finds the button whose text is exactly `Join queue` and clicks it.
 3. Watches the GraphQL response for the `joinTaskQueue` operation.
 4. Queue full -> waits a random 5 to 10 seconds, reloads, clicks again.
-5. Anything else (joined, other error, no response) -> stops.
+5. Page came back blank -> waits the same random 5 to 10 seconds and reloads,
+   the way pressing F5 would. See [When the page comes back
+   blank](#when-the-page-comes-back-blank).
+6. Anything else (joined, other error, no response) -> stops.
 
 ## Setup (about 10 minutes)
 
@@ -499,6 +502,38 @@ The flag is claimed before it is used, so the join can only happen once however
 many times the tab reloads. If you were already in the queue, the retry loop's
 own guard catches it and logging starts instead.
 
+## When the page comes back blank
+
+A reload sometimes lands on nothing: the URL is right, the tab is there, and
+the page is an empty rectangle. No button, no position line, no text at all.
+
+The loop treats that as a page that has not answered yet rather than an answer,
+so it waits the usual random 5 to 10 seconds and reloads — the same thing you
+would do by pressing F5, except it carries on doing it at four in the morning.
+
+| Page after a reload | What happens |
+| --- | --- |
+| Blank | Reload, up to 20 times in a row |
+| Rendered, with the button | Normal attempt: click, read the answer |
+| Rendered, no button (some other page) | Stops, as before |
+| Cloudflare interstitial | Stops and sends a loud Telegram. See [Cloudflare](#cloudflare) |
+
+Three things keep it from becoming a reload loop:
+
+- **A blank page has to be truly empty.** Any readable text means the page
+  rendered, and a rendered page is judged on what it says.
+- **It is capped at 20 blanks in a row**, about twelve minutes, after which it
+  stops and says so. A run that is ended by a blank page was not going to be
+  saved by a twenty-first reload.
+- **The count is consecutive.** One page that renders resets it, so a bad patch
+  in the middle of a long night does not use the allowance up.
+
+Blank reloads do **not** count against `MAX_ATTEMPTS`. That limit is there to
+cap clicks on the button, and a blank page never got as far as one.
+
+Pulling this needs a rebuild: `manifest.template.json` gained `src/blank.js`, so
+run `node build.js`, then the reload arrow on the extension card.
+
 ## Cloudflare
 
 Cloudflare sometimes puts a "verify you are human" page in front of the campaign.
@@ -663,6 +698,7 @@ stable handle, so no manual setup is needed.
 | `src/queue-position.js` | Reads the "Position 412 of 456" line off the page |
 | `src/queue-exit.js` | Spots the two ways a queue run ends |
 | `src/challenge.js` | Spots a Cloudflare interstitial in front of the page |
+| `src/blank.js` | Spots a page that rendered nothing at all |
 | `src/csv.js` | Builds the CSV text and names each session folder |
 | `src/schedule.js` | Reads the picked time and counts down to it |
 | `src/telegram.js` | Builds the text that goes to your phone |
