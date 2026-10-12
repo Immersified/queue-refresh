@@ -17,7 +17,7 @@
   #schedule { margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd; }
   #schedule label { display: block; color: #444; margin-bottom: 4px; }
   #when { font: inherit; width: 100%; box-sizing: border-box; padding: 4px; margin-bottom: 6px; }
-  #countdown { margin-top: 6px; color: #666; line-height: 1.4; }
+  #countdown { margin-top: 6px; color: #666; line-height: 1.4; white-space: pre-line; }
   #countdown.armed { color: #076; font-weight: 600; }
   #launch { margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd; }
   #launch label { display: flex; gap: 6px; align-items: flex-start; color: #444; cursor: pointer; }
@@ -36,15 +36,15 @@
 <div id="shots"></div>
 <div id="telegram"></div>
 <div id="schedule">
-  <label for="when">Join at</label>
+  <label for="when">Task ready at</label>
   <input type="datetime-local" id="when">
   <button id="arm">Arm</button>
   <button id="disarm">Disarm</button>
   <div id="countdown">Not armed.</div>
 </div>
 <div id="launch">
-  <label><input type="checkbox" id="auto-start"> Join when the browser starts</label>
-  <div class="hint">Wakes the pinned queue tab and joins. Leave the tab pinned.</div>
+  <label><input type="checkbox" id="auto-start"> Wake the queue tab when the browser starts</label>
+  <div class="hint">Wakes the pinned queue tab while an arm is ahead. The arm decides when to join.</div>
 </div>
 <div id="challenge"></div>
 <script src="schedule.js"></script>

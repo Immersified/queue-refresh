@@ -12,8 +12,11 @@ REM
 REM The time is 24-hour, on this machine's own clock -- the one in the corner
 REM of the screen. Same clock the popup's Arm box uses.
 REM
-REM Tick "Join when the browser starts" in the extension popup, or the browser
-REM will launch and then sit there.
+REM Launch at the ready time minus two hours minus a few minutes: that is when
+REM the extension starts checking the queue's time estimate.
+REM
+REM Tick "Wake the queue tab when the browser starts" in the extension popup,
+REM and arm the ready time, or the browser will launch and then sit there.
 REM ---------------------------------------------------------------------------
 
 set "TASK=Queue Refresh launch"
@@ -63,5 +66,5 @@ echo.
 echo Scheduled. At %WHEN% (%HOW%^) Edge will be closed and relaunched, and the
 echo pinned queue tab woken about a minute later.
 echo.
-echo Check the extension popup has "Join when the browser starts" ticked,
-echo and that the campaign tab is pinned.
+echo Check the extension popup has "Wake the queue tab when the browser starts"
+echo ticked, the ready time armed, and the campaign tab pinned.

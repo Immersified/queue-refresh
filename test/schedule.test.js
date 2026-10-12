@@ -42,3 +42,52 @@ test('says now once the moment has passed', () => {
   assert.strictEqual(formatCountdown(0), 'now');
   assert.strictEqual(formatCountdown(-5000), 'now');
 });
+
+const { planJoin, nextCheckAt, launchDue, WATCH_MS, CHECK_EVERY_MS } = require('../src/schedule.js');
+
+const READY = Date.UTC(2026, 9, 13, 8, 0);
+const MIN = 60e3;
+
+test('joins on the shortest estimate, so the front comes no earlier than ready', () => {
+  const plan = planJoin({ readyAt: READY, estimate: { min: 60, max: 120 }, now: READY - 120 * MIN });
+  assert.deepStrictEqual(plan, { action: 'wait', joinAt: READY - 60 * MIN });
+});
+
+test('joins straight away when the join time has already passed', () => {
+  const plan = planJoin({ readyAt: READY, estimate: { min: 150, max: 200 }, now: READY - 120 * MIN });
+  assert.strictEqual(plan.action, 'join');
+});
+
+test('joins at exactly the join time', () => {
+  const plan = planJoin({ readyAt: READY, estimate: { min: 60, max: 120 }, now: READY - 60 * MIN });
+  assert.strictEqual(plan.action, 'join');
+});
+
+test('leaves a queue of 30 minutes or less to be joined by hand', () => {
+  const now = READY - 120 * MIN;
+  assert.strictEqual(planJoin({ readyAt: READY, estimate: { min: 20, max: 30 }, now }).action, 'short');
+  assert.strictEqual(planJoin({ readyAt: READY, estimate: { min: 0, max: 2 }, now }).action, 'short');
+  assert.strictEqual(planJoin({ readyAt: READY, estimate: { min: 20, max: 31 }, now }).action, 'wait');
+});
+
+test('does not join without an estimate', () => {
+  assert.deepStrictEqual(
+    planJoin({ readyAt: READY, estimate: null, now: READY - 120 * MIN }),
+    { action: 'no-estimate', joinAt: null }
+  );
+});
+
+test('first check is two hours before ready, then every fifteen minutes', () => {
+  assert.strictEqual(nextCheckAt({ readyAt: READY, lastCheckAt: null }), READY - WATCH_MS);
+  const last = READY - 100 * MIN;
+  assert.strictEqual(nextCheckAt({ readyAt: READY, lastCheckAt: last }), last + CHECK_EVERY_MS);
+  assert.strictEqual(CHECK_EVERY_MS, 15 * MIN);
+  assert.strictEqual(WATCH_MS, 120 * MIN);
+});
+
+test('a browser start wakes the tab only for an arm still ahead', () => {
+  assert.strictEqual(launchDue({ armed: true, readyAt: READY, now: READY - 125 * MIN }), true);
+  assert.strictEqual(launchDue({ armed: true, readyAt: READY, now: READY + 24 * 60 * MIN }), false);
+  assert.strictEqual(launchDue({ armed: false, readyAt: READY, now: READY - MIN }), false);
+  assert.strictEqual(launchDue({ armed: true, readyAt: null, now: READY - MIN }), false);
+});

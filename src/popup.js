@@ -8,7 +8,7 @@ const countdownEl = document.getElementById('countdown');
 const autoStartEl = document.getElementById('auto-start');
 const hintEl = document.querySelector('#launch .hint');
 const challengeEl = document.getElementById('challenge');
-const { formatCountdown } = globalThis.__queueRefreshSchedule;
+const { formatCountdown, nextCheckAt } = globalThis.__queueRefreshSchedule;
 
 function render(text) {
   statusEl.textContent = text || 'Idle.';
@@ -78,17 +78,38 @@ function renderTelegram({ logTelegramStatus }) {
   telegramEl.classList.toggle('failed', text.startsWith('FAILED'));
 }
 
-function renderSchedule({ scheduleArmed, scheduleAt, scheduleStatus }) {
-  const armed = Boolean(scheduleArmed && scheduleAt);
+function describeEstimate(estimate, at) {
+  if (!estimate) return '';
+  const range = estimate.min === estimate.max ? estimate.max : `${estimate.min}–${estimate.max}`;
+  return `Estimate ${range} min (read ${describeAge(Date.now() - at)}).`;
+}
+
+function renderSchedule(stored) {
+  const { scheduleArmed, scheduleReadyAt, scheduleJoinAt, scheduleStatus } = stored;
+  const armed = Boolean(scheduleArmed && scheduleReadyAt);
   countdownEl.classList.toggle('armed', armed);
 
   if (!armed) {
     countdownEl.textContent = scheduleStatus || 'Not armed.';
     return;
   }
-  const left = scheduleAt - Date.now();
-  countdownEl.textContent =
-    `Joining in ${formatCountdown(left)} (${new Date(scheduleAt).toLocaleString()})`;
+
+  const now = Date.now();
+  const lines = [`Ready at ${new Date(scheduleReadyAt).toLocaleString()}`];
+  if (scheduleJoinAt) {
+    lines.push(`Joining in ${formatCountdown(scheduleJoinAt - now)} ` +
+      `(${new Date(scheduleJoinAt).toLocaleTimeString()})`);
+  }
+  const check = nextCheckAt({
+    readyAt: scheduleReadyAt,
+    lastCheckAt: stored.scheduleLastCheckAt
+  });
+  lines.push(`Next estimate check in ${formatCountdown(check - now)}`);
+
+  const estimate = describeEstimate(stored.scheduleEstimate, stored.scheduleEstimateAt);
+  if (estimate) lines.push(estimate);
+  if (scheduleStatus) lines.push(scheduleStatus);
+  countdownEl.textContent = lines.join('\n');
 }
 
 function renderLaunch({ autoStart, autoStartPending }) {
@@ -98,7 +119,7 @@ function renderLaunch({ autoStart, autoStartPending }) {
 
   hintEl.textContent = autoStartPending
     ? 'Browser started. Waiting for the queue tab to wake up…'
-    : 'Wakes the pinned queue tab and joins. Leave the tab pinned.';
+    : 'Wakes the pinned queue tab while an arm is ahead. The arm decides when to join.';
 }
 
 // Only ever shown when it happened recently: a challenge from three nights ago
@@ -160,7 +181,11 @@ const KEYS = [
   'logShotStatus',
   'logTelegramStatus',
   'scheduleArmed',
-  'scheduleAt',
+  'scheduleReadyAt',
+  'scheduleJoinAt',
+  'scheduleLastCheckAt',
+  'scheduleEstimate',
+  'scheduleEstimateAt',
   'scheduleStatus',
   'scheduleInput',
   'autoStart',

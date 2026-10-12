@@ -11,11 +11,18 @@
  * The worker is killed whenever it goes idle, so no state is kept in memory:
  * every handler reads and writes chrome.storage.local.
  */
-importScripts('/src/csv.js', '/src/config.js', '/src/telegram.js', '/src/watchdog.js');
+importScripts(
+  '/src/csv.js',
+  '/src/config.js',
+  '/src/telegram.js',
+  '/src/watchdog.js',
+  '/src/schedule.js'
+);
 
 const { toCsv, sessionFolder } = globalThis.__queueRefreshCsv;
-const { formatUpdate } = globalThis.__queueRefreshTelegram;
+const { formatUpdate, formatCheck } = globalThis.__queueRefreshTelegram;
 const { shouldRevive } = globalThis.__queueRefreshWatchdog;
+const { launchDue } = globalThis.__queueRefreshSchedule;
 
 // null when .env carries no token, which is how Telegram stays optional.
 const TELEGRAM = (globalThis.QUEUE_REFRESH_CONFIG || {}).telegram || null;
@@ -335,10 +342,21 @@ chrome.alarms.create(WATCHDOG, { periodInMinutes: 1 });
  * The first attempt usually finds no tabs at all, because the tab strip is
  * rebuilt before the tabs can be queried. The watchdog covers that: an
  * unclaimed autoStartPending keeps it awake until the tab answers.
+ *
+ * Only while an arm is still ahead. A browser started on any other day, by a
+ * daily task or a Windows update, does nothing.
  */
 async function startOnLaunch() {
-  const { autoStart } = await chrome.storage.local.get('autoStart');
+  const { autoStart, scheduleArmed, scheduleReadyAt } = await chrome.storage.local.get([
+    'autoStart',
+    'scheduleArmed',
+    'scheduleReadyAt'
+  ]);
   if (!autoStart) return;
+
+  if (!launchDue({ armed: scheduleArmed, readyAt: scheduleReadyAt, now: Date.now() })) {
+    return setStatus('Browser started, but nothing is armed for an upcoming ready time.');
+  }
 
   await chrome.storage.local.set({ autoStartPending: true });
   await setStatus('Browser started. Waking the queue tab.');
@@ -389,8 +407,8 @@ const ALARM = 'queue-refresh:schedule';
 
 /**
  * The backstop. The page's own timer is the accurate trigger, but Edge
- * throttles timers in a background tab to once a minute, so an alarm covers
- * the case where the queue tab is not the one in front.
+ * throttles timers in a background tab to once a minute, so an alarm nudges
+ * the page at the first check and at the join time.
  */
 async function fireAlarm() {
   const { scheduleArmed } = await chrome.storage.local.get('scheduleArmed');
@@ -401,12 +419,12 @@ async function fireAlarm() {
   const tabs = await chrome.tabs.query({ url: matches });
 
   if (!tabs.length) {
-    return setStatus('Schedule fired, but no queue tab is open. Nothing to click.');
+    return setStatus('Schedule is due, but no queue tab is open. Nothing to do.');
   }
 
   // The content script does the deciding; it is the one that can see the page.
   for (const tab of tabs) {
-    await chrome.tabs.sendMessage(tab.id, { type: 'schedule-fire' }).catch(() => null);
+    await chrome.tabs.sendMessage(tab.id, { type: 'schedule-tick' }).catch(() => null);
   }
 }
 
@@ -434,6 +452,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     done();
   } else if (message.type === 'schedule-clear') {
     chrome.alarms.clear(ALARM).then(done);
+  } else if (message.type === 'schedule-report') {
+    // Every refresh reaches the phone. Silent while there is a join time to
+    // wait for; loud when it joins now or will not join at all.
+    const silent = message.check.action === 'wait';
+    notify(formatCheck(message.check), { silent }).then(done);
+  } else if (message.type === 'notify') {
+    notify(message.text, { silent: message.silent }).then(done);
   }
   else return false;
 

@@ -41,6 +41,7 @@
         "src/queue-count.js",
         "src/queue-position.js",
         "src/queue-exit.js",
+        "src/queue-estimate.js",
         "src/challenge.js",
         "src/blank.js",
         "src/schedule.js",

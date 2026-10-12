@@ -31,6 +31,10 @@
   if (!blank) {
     throw new Error('[Queue Refresh] src/blank.js is not loaded. Run: node build.js');
   }
+  const readEstimate = globalThis.__queueRefreshReadEstimate;
+  if (!readEstimate) {
+    throw new Error('[Queue Refresh] src/queue-estimate.js is not loaded. Run: node build.js');
+  }
 
   // Set in .env, written into src/config.js by build.js.
   const settings = globalThis.QUEUE_REFRESH_CONFIG;
@@ -342,26 +346,34 @@
   /**
    * Edge has just started and the worker woke this tab.
    *
+   * Waking the tab is all a browser start does. When to join is the arm's
+   * decision, made from the page's own estimate; the worker only wakes the
+   * tab while an arm is still ahead, so a launch on any other day does
+   * nothing.
+   *
    * The flag lives in chrome.storage rather than sessionStorage because a
-   * fresh browser has no sessionStorage to read. It is claimed before it is
-   * used, so two tabs on the same site cannot both take it.
+   * fresh browser has no sessionStorage to read. Claiming it is what tells the
+   * watchdog the tab is awake.
    */
   async function claimAutoStart() {
     const { autoStartPending } = await chrome.storage.local.get('autoStartPending');
     if (!autoStartPending) return;
 
     await chrome.storage.local.set({ autoStartPending: false });
-    setStatus('Auto-start: the browser has just started. Joining.');
-
-    // runAttempt's own in-queue guard covers the case where we are already
-    // through, so there is nothing to check here.
-    sessionStorage.setItem(KEY_ACTIVE, '1');
-    sessionStorage.setItem(KEY_ATTEMPTS, '0');
+    setStatus('Browser started and the queue tab is awake. The schedule decides when to join.');
   }
 
   // ---------------------------------------------------------------- schedule
 
+  // You set when the task should be READY. The join time follows from the
+  // page's "Estimated 60–120 min to front", read afresh every fifteen minutes
+  // from two hours out. The arithmetic is in schedule.js.
+
   const SCHEDULE_TICK_MS = 1000;
+  // The estimate is rendered by the app, so it arrives after the script does.
+  const ESTIMATE_TIMEOUT_MS = 20000;
+  const ESTIMATE_POLL_MS = 500;
+
   let scheduleTimer = null;
 
   function setScheduleStatus(text) {
@@ -369,8 +381,21 @@
     chrome.storage.local.set({ scheduleStatus: text });
   }
 
+  const tellWorker = (message) => chrome.runtime.sendMessage(message).catch(() => null);
+
+  async function clearArm(text) {
+    await chrome.storage.local.set({
+      scheduleArmed: false,
+      scheduleJoinAt: null,
+      scheduleCheckPending: false
+    });
+    await tellWorker({ type: 'schedule-clear' });
+    stopScheduleTick();
+    setScheduleStatus(text);
+  }
+
   /**
-   * The moment has arrived. Claims the arm first so the page tick and the
+   * The join time has arrived. Claims the arm first so the page tick and the
    * worker's alarm cannot both fire it, then does exactly one of two things:
    * join, or stand down because we are already in.
    */
@@ -379,7 +404,8 @@
     if (!scheduleArmed) return;
 
     // Claimed before anything else happens, so a second trigger finds it gone.
-    await chrome.storage.local.set({ scheduleArmed: false });
+    await chrome.storage.local.set({ scheduleArmed: false, scheduleJoinAt: null });
+    await tellWorker({ type: 'schedule-clear' });
     stopScheduleTick();
 
     if (alreadyInQueue()) {
@@ -405,27 +431,130 @@
   }
 
   /**
+   * One step of the arm: join if the join time has come, give up if the ready
+   * time has, or reload for a fresh estimate if a check is due.
+   */
+  async function scheduleTick() {
+    const store = await chrome.storage.local.get([
+      'scheduleArmed',
+      'scheduleReadyAt',
+      'scheduleJoinAt',
+      'scheduleLastCheckAt'
+    ]);
+    if (!store.scheduleArmed || !store.scheduleReadyAt) return stopScheduleTick();
+
+    const now = Date.now();
+    if (store.scheduleJoinAt && now >= store.scheduleJoinAt) return fireSchedule();
+
+    if (now >= store.scheduleReadyAt) {
+      await clearArm('Ready time reached without joining. Disarmed.');
+      return tellWorker({
+        type: 'notify',
+        text: 'Queue Refresh\nReady time reached without joining. Disarmed.',
+        silent: false
+      });
+    }
+
+    const due = schedule.nextCheckAt({
+      readyAt: store.scheduleReadyAt,
+      lastCheckAt: store.scheduleLastCheckAt
+    });
+    if (now >= due) startCheck(now);
+  }
+
+  /** Reload the page: the estimate only updates on a fresh load. */
+  async function startCheck(now) {
+    stopScheduleTick();
+    await chrome.storage.local.set({ scheduleLastCheckAt: now, scheduleCheckPending: true });
+    setScheduleStatus('Refreshing for a fresh time estimate.');
+    location.reload();
+  }
+
+  function waitForEstimate() {
+    return new Promise((resolve) => {
+      const deadline = Date.now() + ESTIMATE_TIMEOUT_MS;
+      const poll = () => {
+        const estimate = readEstimate(pageText());
+        if (estimate || alreadyInQueue()) return resolve(estimate);
+        if (Date.now() >= deadline) return resolve(null);
+        setTimeout(poll, ESTIMATE_POLL_MS);
+      };
+      poll();
+    });
+  }
+
+  /**
+   * The reload startCheck asked for has landed. Read the estimate, decide,
+   * and tell the phone either way.
+   */
+  async function runCheck() {
+    const { scheduleArmed, scheduleCheckPending, scheduleReadyAt } =
+      await chrome.storage.local.get(['scheduleArmed', 'scheduleCheckPending', 'scheduleReadyAt']);
+    if (!scheduleArmed || !scheduleCheckPending) return;
+
+    // Claimed first, so a second tab on the site cannot run the same check.
+    await chrome.storage.local.set({ scheduleCheckPending: false });
+
+    const estimate = await waitForEstimate();
+
+    if (alreadyInQueue()) {
+      logger.start();
+      return clearArm('You are already in the queue. Disarmed; logging instead.');
+    }
+
+    const now = Date.now();
+    const plan = schedule.planJoin({ readyAt: scheduleReadyAt, estimate, now });
+
+    // No estimate clears an earlier join time too: no reading, no join.
+    await chrome.storage.local.set({
+      scheduleJoinAt: plan.joinAt,
+      scheduleEstimate: estimate,
+      scheduleEstimateAt: now
+    });
+
+    await tellWorker({
+      type: 'schedule-report',
+      check: {
+        estimate,
+        waiting: globalThis.__queueRefreshReadCount(pageText()),
+        action: plan.action,
+        readyAt: scheduleReadyAt,
+        joinAt: plan.joinAt,
+        now
+      }
+    });
+
+    if (plan.action === 'join') return fireSchedule();
+
+    if (plan.action === 'wait') {
+      // Backstop for a background tab whose timers Edge has throttled.
+      await tellWorker({ type: 'schedule-set', at: plan.joinAt });
+      setScheduleStatus(`Joining at ${new Date(plan.joinAt).toLocaleTimeString()}.`);
+    } else if (plan.action === 'short') {
+      setScheduleStatus(
+        `Queue is ${schedule.SHORT_QUEUE_MINUTES} min or less. Not joining; join by hand.`
+      );
+    } else {
+      setScheduleStatus('No time estimate on the page. Not joining; checking again later.');
+    }
+    startScheduleTick();
+  }
+
+  /**
    * The page's own clock is the accurate one, and the tab has to be alive to
    * click anyway. chrome.alarms in the worker is the backstop, not the driver.
    */
   function startScheduleTick() {
     if (scheduleTimer) return;
-    scheduleTimer = setInterval(async () => {
-      const { scheduleArmed, scheduleAt } = await chrome.storage.local.get([
-        'scheduleArmed',
-        'scheduleAt'
-      ]);
-      if (!scheduleArmed || !scheduleAt) return stopScheduleTick();
-      if (Date.now() >= scheduleAt) fireSchedule();
-    }, SCHEDULE_TICK_MS);
+    scheduleTimer = setInterval(scheduleTick, SCHEDULE_TICK_MS);
   }
 
   async function arm(value) {
-    const at = schedule.parseSchedule(value);
-    if (at === null) {
+    const readyAt = schedule.parseSchedule(value);
+    if (readyAt === null) {
       return setScheduleStatus('That is not a date I can read. Use the picker.');
     }
-    if (at <= Date.now()) {
+    if (readyAt <= Date.now()) {
       return setScheduleStatus('That time has already passed.');
     }
     if (alreadyInQueue()) {
@@ -435,18 +564,26 @@
       );
     }
 
-    await chrome.storage.local.set({ scheduleArmed: true, scheduleAt: at, scheduleInput: value });
-    await chrome.runtime.sendMessage({ type: 'schedule-set', at }).catch(() => null);
-    setScheduleStatus(`Armed for ${new Date(at).toLocaleString()}.`);
+    await chrome.storage.local.set({
+      scheduleArmed: true,
+      scheduleReadyAt: readyAt,
+      scheduleJoinAt: null,
+      scheduleLastCheckAt: null,
+      scheduleCheckPending: false,
+      scheduleEstimate: null,
+      scheduleInput: value
+    });
+
+    const firstCheck = schedule.nextCheckAt({ readyAt, lastCheckAt: null });
+    await tellWorker({ type: 'schedule-set', at: Math.max(firstCheck, Date.now()) });
+    setScheduleStatus(
+      `Armed. Ready at ${new Date(readyAt).toLocaleString()}. ` +
+        `Checking the estimate from ${new Date(firstCheck).toLocaleTimeString()}.`
+    );
     startScheduleTick();
   }
 
-  async function disarm() {
-    await chrome.storage.local.set({ scheduleArmed: false });
-    await chrome.runtime.sendMessage({ type: 'schedule-clear' }).catch(() => null);
-    stopScheduleTick();
-    setScheduleStatus('Disarmed.');
-  }
+  const disarm = () => clearArm('Disarmed.');
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'start') {
@@ -479,7 +616,7 @@
     }
     if (message.type === 'arm') arm(message.value);
     if (message.type === 'disarm') disarm();
-    if (message.type === 'schedule-fire') fireSchedule();
+    if (message.type === 'schedule-tick') scheduleTick();
     sendResponse({ active: isActive() });
     return false;
   });
@@ -519,6 +656,7 @@
     // Resume automatically after the reload we triggered ourselves.
     runAttempt();
     watchCount();
+    runCheck();
   }
 
   boot();

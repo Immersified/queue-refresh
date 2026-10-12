@@ -44,8 +44,50 @@
     return lines.join('\n');
   }
 
-  root.__queueRefreshTelegram = { formatUpdate, formatElapsed };
+  // Wall-clock time on this machine, the same clock the popup's picker uses.
+  function formatClock(ms) {
+    const date = new Date(ms);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+
+  /**
+   * The message sent on every scheduled refresh: what the page said, and what
+   * was decided because of it.
+   *
+   * @param {object} check  estimate, waiting, action, readyAt, joinAt, now
+   */
+  function formatCheck({ estimate, waiting, action, readyAt, joinAt, now }) {
+    const lines = ['Queue Refresh'];
+
+    if (estimate) {
+      const range = estimate.min === estimate.max
+        ? `${estimate.max}`
+        : `${estimate.min}–${estimate.max}`;
+      lines.push(`Estimated ${range} min to front`);
+    } else {
+      lines.push('No time estimate on the page');
+    }
+    if (typeof waiting === 'number') lines.push(`${waiting} waiting`);
+
+    lines.push(`Ready at ${formatClock(readyAt)}`);
+
+    if (action === 'wait') {
+      lines.push(`Joining at ${formatClock(joinAt)} (in ${formatElapsed(joinAt - now)})`);
+    } else if (action === 'join') {
+      lines.push('Joining now');
+    } else if (action === 'short') {
+      lines.push('Queue is short. Not joining: join by hand');
+    } else {
+      lines.push('Not joining without an estimate');
+    }
+
+    return lines.join('\n');
+  }
+
+  const api = { formatUpdate, formatElapsed, formatCheck };
+  root.__queueRefreshTelegram = api;
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { formatUpdate, formatElapsed };
+    module.exports = api;
   }
 })(typeof globalThis !== 'undefined' ? globalThis : self);

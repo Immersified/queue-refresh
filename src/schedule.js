@@ -57,8 +57,63 @@
     return `${seconds}s`;
   }
 
-  root.__queueRefreshSchedule = { parseSchedule, formatCountdown };
+  // Checking starts this long before the ready time, and repeats this often.
+  const WATCH_MS = 2 * 3600e3;
+  const CHECK_EVERY_MS = 15 * 60e3;
+
+  // A queue whose longest estimate is this short is joined by hand.
+  const SHORT_QUEUE_MINUTES = 30;
+
+  /**
+   * What to do with one reading of the estimate.
+   *
+   * Joins on the shortest estimate, so the front is reached at the ready time
+   * at the earliest, never before it. Arriving early means an offer that
+   * lapses and a second trip through the queue; arriving late only means a
+   * wait.
+   *
+   * @param {number} readyAt  when the task should be ready, ms
+   * @param {{min: number, max: number}|null} estimate minutes to the front
+   * @param {number} now
+   * @returns {{action: 'join'|'wait'|'short'|'no-estimate', joinAt: number|null}}
+   */
+  function planJoin({ readyAt, estimate, now }) {
+    if (!estimate) return { action: 'no-estimate', joinAt: null };
+    if (estimate.max <= SHORT_QUEUE_MINUTES) return { action: 'short', joinAt: null };
+
+    const joinAt = readyAt - estimate.min * 60e3;
+    return { action: joinAt <= now ? 'join' : 'wait', joinAt };
+  }
+
+  /**
+   * When the page is next due a reload for a fresh estimate: two hours before
+   * the ready time, then every fifteen minutes after the last check. A time in
+   * the past just means "now".
+   */
+  function nextCheckAt({ readyAt, lastCheckAt }) {
+    return lastCheckAt ? lastCheckAt + CHECK_EVERY_MS : readyAt - WATCH_MS;
+  }
+
+  /**
+   * Should a browser start wake the queue tab? Only for an arm that is still
+   * ahead of us: a launch on any other day does nothing.
+   */
+  function launchDue({ armed, readyAt, now }) {
+    return Boolean(armed && readyAt && now < readyAt);
+  }
+
+  const api = {
+    parseSchedule,
+    formatCountdown,
+    planJoin,
+    nextCheckAt,
+    launchDue,
+    WATCH_MS,
+    CHECK_EVERY_MS,
+    SHORT_QUEUE_MINUTES
+  };
+  root.__queueRefreshSchedule = api;
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { parseSchedule, formatCountdown };
+    module.exports = api;
   }
 })(typeof globalThis !== 'undefined' ? globalThis : self);

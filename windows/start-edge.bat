@@ -13,8 +13,9 @@ REM campaign that changes needs nothing changed here: open the new link in the
 REM pinned tab and that is the whole update.
 REM
 REM A restored pinned tab is an empty placeholder until something activates it.
-REM The extension does that on browser start -- tick "Join when the browser
-REM starts" in the popup -- so there is no need to click it by hand.
+REM The extension does that on browser start -- tick "Wake the queue tab when
+REM the browser starts" in the popup -- so there is no need to click it by hand.
+REM It only wakes the tab while an arm is ahead; the arm decides when to join.
 REM
 REM WHY /restart EXISTS
 REM   The extension joins on chrome.runtime.onStartup, which only fires when

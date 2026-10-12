@@ -62,8 +62,8 @@ committing never overwrites your settings. Edit `.env`, never the generated file
 | **Stop** | Ends both the retry loop and the logging |
 | **Stop logging** | Ends the logging only, leaving the retry loop alone |
 | **Test shot** | Takes a screenshot right now, so you can prove capture works without waiting for the interval |
-| **Arm** | Joins when the clock reaches the time you picked, then logs once through |
-| **Join when the browser starts** | A tickbox, not a button. Wakes the pinned queue tab on launch and joins. For a cold launch from Task Scheduler |
+| **Arm** | You pick when the task should be **ready**. It works out when to join from the page's time estimate, then logs once through. See [Scheduled start](#scheduled-start) |
+| **Wake the queue tab when the browser starts** | A tickbox, not a button. Wakes the pinned queue tab on launch, but only while an arm is ahead. For a cold launch from Task Scheduler |
 | **Disarm** | Cancels it |
 
 The popup shows the status, your position (or the queue length before you join),
@@ -361,7 +361,8 @@ net, not a fix.
 
 A tab that has been open all day is the problem the rest of this file keeps
 working around. The alternative is not to have one: launch Edge fresh a few
-minutes before the join, and let it join on its way up.
+minutes before the estimate checks begin (two hours before the ready time), and
+let the arm take it from there.
 
 Three pieces, and only one of them is new:
 
@@ -369,7 +370,7 @@ Three pieces, and only one of them is new:
 | --- | --- |
 | **Task Scheduler** | Runs `start-edge.bat` at the time you set. Built into Windows |
 | **The pinned Mercor tab** | Holds the campaign URL and comes back when Edge restores |
-| **Join when the browser starts** | The popup tickbox. Wakes that tab and joins |
+| **Wake the queue tab when the browser starts** | The popup tickbox. Wakes that tab; the arm decides when to join |
 
 ### Setting it up
 
@@ -396,8 +397,15 @@ the queue page.
 place the campaign URL lives, so when the campaign changes, open the new link
 in this tab and the update is done.
 
-**5. Tick "Join when the browser starts"** in the popup. Stored, so it survives
-restarts and stays on until you untick it.
+**5. Tick "Wake the queue tab when the browser starts"** in the popup. Stored,
+so it survives restarts and stays on until you untick it.
+
+It only does anything while an arm is ahead. A browser started on any other
+day — by a `daily` task, a Windows update, anything — wakes nothing and joins
+nothing. Before this, the tickbox joined on **every** launch, which is why a
+`daily` task joined every day.
+
+**5b. Arm the ready time** in the popup. See [Scheduled start](#scheduled-start).
 
 **6. Schedule the launch.**
 
@@ -407,8 +415,9 @@ windows\schedule-launch.bat 05:45 daily    every day
 windows\schedule-launch.bat /delete        remove it
 ```
 
-Give it a few minutes' head start: the tab usually wakes on the watchdog tick
-about a minute after Edge opens.
+Launch at **ready time − 2 hours − a few minutes**. Ready at 08:00 means a
+launch at 05:55: the first estimate check is at 06:00, and the tab usually
+wakes on the watchdog tick about a minute after Edge opens.
 
 **Edge does not need to be open beforehand, and it does not need to be closed
 either.** The task closes it first. See [Why it closes Edge
@@ -430,9 +439,12 @@ Then run the launch exactly as the task will:
 windows\start-edge.bat /restart
 ```
 
-The pinned tab should come forward and start clicking within about a minute,
+With an arm ahead, the pinned tab should come forward within about a minute,
 and the popup status should say
-`Auto-start: the browser has just started. Joining.`
+`Browser started and the queue tab is awake. The schedule decides when to join.`
+
+With nothing armed, it says
+`Browser started, but nothing is armed for an upcoming ready time.`
 
 If nothing happens, the usual cause is that Edge never actually restarted —
 check the console for `Browser started` under the extension's service worker in
@@ -491,16 +503,14 @@ no screen coordinates, nothing that breaks when the screen resolution changes.
 1. Task Scheduler runs `start-edge.bat /restart`, with no URL. Any running Edge
    is closed gracefully first, so `onStartup` has a real start to fire on.
 2. Edge starts and restores the pinned tabs.
-3. `chrome.runtime.onStartup` fires. If the tickbox is on, it sets a pending
-   flag and tries to wake the tab.
+3. `chrome.runtime.onStartup` fires. If the tickbox is on **and an arm is
+   ahead**, it sets a pending flag and tries to wake the tab. Otherwise it
+   stops here.
 4. That first try usually finds nothing: the tab strip is rebuilt before the
    tabs can be queried. It says so and waits rather than opening a second tab.
 5. The watchdog tick, a minute later, finds the tab and wakes it.
-6. The content script loads, claims the pending flag, and joins.
-
-The flag is claimed before it is used, so the join can only happen once however
-many times the tab reloads. If you were already in the queue, the retry loop's
-own guard catches it and logging starts instead.
+6. The content script loads and claims the pending flag. From here the arm
+   runs as normal: estimate checks, then the join.
 
 ## When the page comes back blank
 
@@ -614,18 +624,52 @@ IP gets reclassified and the challenge comes back on a night nobody is watching.
 
 ## Scheduled start
 
-Temporary, for collecting data. Pick a time in the popup, press **Arm**, and
-leave the queue page open. When the machine's clock reaches it, the extension
-joins and starts logging.
+Pick when the task should be **ready**, press **Arm**, and leave the queue page
+open. The extension works out when to join from the page's own estimate:
 
 ```
-Join at  [ 07/09/2026 06:03 ]
-[ Arm ] [ Disarm ]
-Joining in 8h 42m (7/09/2026, 06:03:00)
+Join the queue to get the next available task.
+568 experts currently waiting
+Estimated 60–120 min to front if you join now
 ```
+
+**Join time = ready time − the shortest estimate.** Ready at 08:00 with
+60–120 min means joining at 07:00. You reach the front at 08:00 at the
+earliest, never before it: arriving early means an offer that lapses and a
+second trip through the queue.
+
+```
+Task ready at  [ 13/10/2026 08:00 ]
+[ Arm ] [ Disarm ]
+Ready at 13/10/2026, 08:00:00
+Joining in 52m (07:00:00)
+Next estimate check in 7m 12s
+Estimate 60–120 min (read 8m ago).
+```
+
+### The estimate checks
+
+The estimate only changes on a fresh page load, so the page reloads itself:
+
+- **First check:** two hours before the ready time.
+- **Then:** every 15 minutes, until it joins or the ready time passes.
+- **Each check** sets a new join time and sends it to Telegram.
+
+| The page says | What happens |
+| --- | --- |
+| Join time still ahead | Waits for it. Telegram, silent |
+| Join time already passed (e.g. 150–200 min) | Joins right away. Telegram, loud |
+| Longest estimate **30 min or less** (incl. "under 2 min") | Does not join: join by hand. Telegram, loud |
+| No estimate at all | Does not join, and drops any earlier join time. Tries again at the next check. Telegram, loud |
+
+Each check decides afresh, so a short queue at 06:00 that has grown by 06:15
+gets a join time then.
+
+If the ready time passes without a join, the arm is cleared and Telegram says
+so. An arm whose date has passed never does anything again.
 
 The time is **local wall-clock time on that machine** — the clock in the corner
-of the server's screen. No timezone is attached, so what you type is what fires.
+of the server's screen. No timezone is attached, so what you type is what counts.
 
 It lives in the popup rather than `.env` on purpose: you will change it nightly,
 and `.env` would mean `node build.js`, an extension reload and a page reload
@@ -637,7 +681,8 @@ Joining twice is the one thing that must not happen, so it is checked twice:
 
 - **When you press Arm.** If you are already in, it refuses to arm and says so,
   rather than looking like a plan for the night that will do nothing.
-- **When the schedule fires.** If you are already in, the join is skipped.
+- **At every estimate check.** If you are already in, the arm is cleared.
+- **When the join time comes.** If you are already in, the join is skipped.
 
 **Logging still starts.** Being already in the queue is still a night of
 position data, which is the point of the exercise.
@@ -656,8 +701,9 @@ button anyway, so nothing is gained by putting the clock elsewhere.
 
 `chrome.alarms` in the service worker is a **backstop**, not the driver: Edge
 throttles timers in a background tab to once a minute, so if the queue tab is
-behind another one, the alarm still fires it. Whichever gets there first claims
-the arm, so it can only happen once.
+behind another one, the alarm still nudges it at the first check and at the
+join time. Whichever gets there first claims the arm, so it can only happen
+once.
 
 An arm survives page reloads and extension restarts, because it is stored, not
 held in a variable.
@@ -736,7 +782,8 @@ stable handle, so no manual setup is needed.
 | `src/challenge.js` | Spots a Cloudflare interstitial in front of the page |
 | `src/blank.js` | Spots a page that rendered nothing at all |
 | `src/csv.js` | Builds the CSV text and names each session folder |
-| `src/schedule.js` | Reads the picked time and counts down to it |
+| `src/schedule.js` | Reads the picked time, plans the join time, counts down |
+| `src/queue-estimate.js` | Reads the "Estimated 60–120 min to front" line off the page |
 | `src/telegram.js` | Builds the text that goes to your phone |
 | `src/watchdog.js` | Decides when a silent page needs reloading |
 | `check-telegram.js` | Sends one test message to prove the bot works |
