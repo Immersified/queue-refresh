@@ -297,7 +297,8 @@ Send these to your bot. It answers in the same chat.
 | --- | --- |
 | `/join` | Presses **Start** on the queue tab |
 | `/stop` | Presses **Stop**. An arm is left alone, and the reply says so |
-| `/status` | Each open campaign: join loop, last message, queue. `/status prism` for one |
+| `/status` | Each open campaign: join loop, last message, queue, estimate, page age. `/status prism` for one |
+| `/refresh` | Reloads a campaign page, then sends its status with fresh numbers. `/refresh prism` with two open |
 | `/arm 21:30` | Arms for the next 21:30 on the VPS clock: today, or tomorrow if it has passed |
 | `/help` | Lists the commands. Any unknown command gets this too |
 
@@ -329,18 +330,52 @@ Queue Refresh · status
 Guild Signal V2
 Join loop: stopped
 Last (17:13): Stopped: no enabled "Join queue" button after 30s.
-Queue: not joined, 434 waiting (read 16m ago)
+Queue: not joined, 434 waiting (read just now)
+Estimate: 75–135 min to front
+Page loaded 47m ago, unchanged since. /refresh signal for fresh numbers
 
 Guild Prism V2
 Join loop: running
 Last (17:29): Attempt 2: queue full. Refreshing in 7.2s.
-Queue: not joined, 512 waiting (read 1m ago)
+Queue: not joined, 512 waiting (read just now)
+Estimate: 80–140 min to front
+Page loaded 5s ago, unchanged since
 
 Logging: off
 Armed: no
 ```
 
-`Join loop: not started` means that tab has not done anything since it loaded.
+- **Read live.** Each tab is read when you send `/status`, not from storage.
+  A tab that cannot answer shows its last stored reading, and says so.
+- `Join loop: not started` means that tab has not done anything since it loaded.
+
+#### Does the page need a refresh?
+
+Not known yet: nobody has checked whether the waiting count and estimate
+update by themselves before you join. So `/status` checks every time. It
+compares the page now with its first reading after it loaded:
+
+| Line | Meaning |
+| --- | --- |
+| `Page loaded 47m ago, unchanged since. /refresh signal for fresh numbers` | Nothing moved in 10+ minutes. The numbers may be stale |
+| `Page loaded 30m ago. Changed since, without a refresh: 434 → 431 waiting` | The page updates by itself. No refresh needed |
+| `Page loaded 3m ago, unchanged since` | Too soon to tell |
+
+After a few `/status` messages over an evening, you will know which it is.
+A running join loop reloads the page on every attempt, so it gets no hint.
+
+`/refresh` is one extra page load. It is not sent while that tab's join loop
+runs, because the loop is already reloading it.
+
+**Position updates carry the estimate too**, when the page shows one:
+
+```
+Queue Refresh · Guild Signal V2
+Position 412 of 456
+Estimated 20–40 min to front
+Up 44 since the last update
+Elapsed 1h 04m
+```
 
 **When a join stops without joining**, the phone hears about it, loudly. A
 missing button also lists what was on the page instead:

@@ -188,3 +188,88 @@ test('status names the campaign that is logging and the one that is armed', () =
   }, NOW);
   assert.ok(text.endsWith('Logging: Guild Signal V2, for 1h 04m\nArmed: Guild Prism V2, ready 08:00, joining 07:00'));
 });
+
+const { formatEstimate, readingChanges, describeLoad, STALE_PAGE_MS } = require('../src/telegram.js');
+
+test('writes an estimate the way the page does', () => {
+  assert.strictEqual(formatEstimate({ min: 75, max: 135 }), '75–135 min to front');
+  assert.strictEqual(formatEstimate({ min: 45, max: 45 }), '45 min to front');
+});
+
+test('a position update carries the estimate when the page shows one', () => {
+  const sample = { ...inQueue, estimate: { min: 20, max: 40 } };
+  assert.strictEqual(
+    formatUpdate(sample, null, 0),
+    'Queue Refresh\nPosition 412 of 456\nEstimated 20–40 min to front\nElapsed 0s'
+  );
+  assert.ok(!formatUpdate(inQueue, null, 0).includes('Estimated'));
+});
+
+test('lists what moved since the page loaded', () => {
+  const first = { position: null, waiting: 434, estimate: { min: 75, max: 135 } };
+  assert.deepStrictEqual(
+    readingChanges(first, { position: null, waiting: 431, estimate: { min: 70, max: 130 } }),
+    ['434 → 431 waiting', '75–135 → 70–130 min']
+  );
+  assert.deepStrictEqual(readingChanges(first, { ...first }), []);
+  // Joining is a change of view, not a number moving.
+  assert.deepStrictEqual(
+    readingChanges({ position: 40, waiting: null, estimate: null }, { position: 35, waiting: null, estimate: null }),
+    ['position 40 → 35']
+  );
+});
+
+test('says whether the page needs a refresh', () => {
+  const first = { position: null, waiting: 434, estimate: { min: 75, max: 135 } };
+  const reading = (age, latest = first) => ({ ...latest, loadedAt: NOW - age, first });
+
+  assert.strictEqual(
+    describeLoad(reading(47 * 60e3), NOW, '/refresh prism'),
+    'Page loaded 47m ago, unchanged since. /refresh prism for fresh numbers'
+  );
+  assert.strictEqual(describeLoad(reading(3 * 60e3), NOW, '/refresh'), 'Page loaded 3m ago, unchanged since');
+  assert.strictEqual(
+    describeLoad(reading(STALE_PAGE_MS * 3, { ...first, waiting: 431 }), NOW, '/refresh'),
+    'Page loaded 30m ago. Changed since, without a refresh: 434 → 431 waiting'
+  );
+  // A reading stored before this was tracked says nothing rather than guess.
+  assert.strictEqual(describeLoad({ waiting: 434, at: NOW }, NOW, '/refresh'), null);
+});
+
+test('status shows the estimate, the page age, and a stale reading', () => {
+  const first = { position: null, waiting: 434, estimate: { min: 75, max: 135 } };
+  const text = formatStatus({
+    campaigns: [{
+      name: 'Guild Prism V2',
+      reading: { state: 'not-joined', waiting: 434, estimate: { min: 75, max: 135 }, at: NOW, loadedAt: NOW - 47 * 60e3, first },
+      refreshAs: '/refresh prism',
+      live: false
+    }],
+    logging: null,
+    arm: null
+  }, NOW);
+  assert.ok(text.includes([
+    'Guild Prism V2',
+    'Join loop: not started',
+    'Queue: not joined, 434 waiting (read just now)',
+    'Estimate: 75–135 min to front',
+    'Not readable right now, so this is the last stored reading',
+    'Page loaded 47m ago, unchanged since. /refresh prism for fresh numbers'
+  ].join('\n')));
+});
+
+test('a running join loop gets no refresh hint: it reloads the page itself', () => {
+  const first = { position: null, waiting: 434, estimate: null };
+  const text = formatStatus({
+    campaigns: [{
+      name: 'Guild Signal V2',
+      status: { text: 'Attempt 4: queue full.', at: NOW, running: true },
+      reading: { state: 'not-joined', waiting: 434, at: NOW, loadedAt: NOW - 47 * 60e3, first },
+      refreshAs: '/refresh signal'
+    }],
+    logging: null,
+    arm: null
+  }, NOW);
+  assert.ok(text.includes('Page loaded 47m ago, unchanged since\n'));
+  assert.ok(!text.includes('/refresh'));
+});

@@ -691,7 +691,11 @@
       chrome.runtime.sendMessage({ type: 'test-shot' });
     }
     if (message.type === 'read-count') {
-      logger.sampleNow();
+      // Answered with the reading itself, so /status can show the page as it
+      // is now rather than as it was when last stored.
+      const { campaignReading } = logger.sampleNow();
+      sendResponse({ active: isActive(), campaign: campaign(), reading: campaignReading });
+      return false;
     }
     if (message.type === 'arm') {
       // Answered once armed, so a Telegram /arm can reply with what happened.

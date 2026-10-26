@@ -277,6 +277,7 @@ const REBUILD_NEEDED =
 // How long a reloaded tab gets to come back before giving up on it.
 const PAGE_LOAD_MS = 30000;
 const ANSWER_RETRIES = 10;
+const READING_RETRIES = 20;
 
 /**
  * The one tab a command means. With one campaign open no name is needed; with
@@ -388,9 +389,17 @@ async function pressAndReply(tab, type, extra, describe) {
   return loud(before + (await describe(result.answer)), campaign);
 }
 
-/** Each open campaign with its own status line and reading, for /status. */
-async function collectStatus(name) {
-  const tabs = pickTabs(await chrome.tabs.query({ url: siteMatches() }), name);
+/**
+ * Each campaign tab with its own status line and reading, for /status.
+ *
+ * Every tab is read live, so the answer is the page as it is now. A tab that
+ * cannot answer (asleep, mid-reload, old code) falls back to its last stored
+ * reading, and the reply says so.
+ *
+ * @param {object[]} tabs   the tabs to report on
+ * @param {object[]} allTabs every campaign tab, to word the /refresh hint
+ */
+async function collectStatus(tabs, allTabs) {
   const store = await chrome.storage.local.get(null);
 
   // Stored under the name the page shows, which the tab title contains.
@@ -399,19 +408,34 @@ async function collectStatus(name) {
     const prefix = prefixes.find((p) => key.startsWith(p));
     return prefix ? [key.slice(prefix.length)] : [];
   });
-
-  const campaigns = tabs.map((tab) => {
+  const storedName = (tab) => {
     const title = (tab.title || '').toLowerCase();
     const [match] = known
       .filter((stored) => title.includes(stored.toLowerCase()))
       .sort((a, b) => b.length - a.length);
-    const campaign = match || tab.title;
-    return {
+    return match || tab.title;
+  };
+
+  const campaigns = [];
+  for (const tab of tabs) {
+    const { answer } = tab.discarded ? {} : await ask(tab.id, { type: 'read-count' });
+    const campaign = (answer && answer.campaign) || storedName(tab);
+    const liveReading = answer && answer.reading;
+
+    const others = allTabs.filter((other) => other.id !== tab.id).map((other) => other.title);
+    // The page's own answer beats the stored flag, which is only as new as
+    // the last status line.
+    const stored = store[statusKey(campaign)];
+    const status = stored && answer ? { ...stored, running: Boolean(answer.active) } : stored;
+
+    campaigns.push({
       name: campaign,
-      status: store[statusKey(campaign)],
-      reading: store[readingKey(campaign)]
-    };
-  });
+      status,
+      reading: liveReading || store[readingKey(campaign)],
+      live: Boolean(liveReading) || !store[readingKey(campaign)],
+      refreshAs: others.length ? `/refresh ${shortName(tab.title, others)}` : '/refresh'
+    });
+  }
 
   return {
     campaigns,
@@ -426,6 +450,39 @@ async function collectStatus(name) {
       }
       : null
   };
+}
+
+async function sendStatus(tabs, allTabs) {
+  const status = await collectStatus(tabs, allTabs);
+  return notify(formatStatus(status, Date.now()), { silent: false });
+}
+
+/**
+ * Reload one campaign page and report it once its numbers are back.
+ *
+ * Not while its join loop runs: that reloads the page on every attempt, so the
+ * numbers are already fresh, and a reload in between would cut an attempt
+ * short.
+ */
+async function refreshTab(tab, allTabs) {
+  if (!pageCodeLoaded()) return loud(REBUILD_NEEDED, tab.title);
+
+  const { answer } = await ask(tab.id, { type: 'read-count' });
+  if (answer && answer.active) {
+    await loud('The join loop is running and reloads this page itself. Numbers are fresh.', answer.campaign);
+    return sendStatus([tab], allTabs);
+  }
+
+  await chrome.tabs.reload(tab.id);
+  await waitForLoad(tab.id);
+
+  // The numbers are rendered by the app a moment after the load completes.
+  for (let i = 0; i < READING_RETRIES; i++) {
+    const retry = await ask(tab.id, { type: 'read-count' });
+    if (retry.answer && retry.answer.reading) return sendStatus([tab], allTabs);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  return loud('Reloaded, but the page showed no queue numbers within 20s. Check that it loads.', tab.title);
 }
 
 async function runCommand({ command, arg }) {
@@ -464,11 +521,16 @@ async function runCommand({ command, arg }) {
   }
 
   if (command === 'status') {
-    const status = await collectStatus(name);
-    if (name && !status.campaigns.length) {
-      return loud(`No open campaign matches "${name}".`);
-    }
-    return notify(formatStatus(status, Date.now()), { silent: false });
+    const allTabs = await chrome.tabs.query({ url: siteMatches() });
+    const tabs = pickTabs(allTabs, name);
+    if (name && !tabs.length) return loud(`No open campaign matches "${name}".`);
+    return sendStatus(tabs, allTabs);
+  }
+
+  if (command === 'refresh') {
+    const choice = await chooseTab(name, 'refresh NAME');
+    if (!choice.tab) return loud(choice.reply);
+    return refreshTab(choice.tab, await chrome.tabs.query({ url: siteMatches() }));
   }
 
   return notify(HELP, { silent: false });

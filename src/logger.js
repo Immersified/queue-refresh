@@ -33,11 +33,19 @@
 
   let timer = null;
 
+  // When this page loaded, and its first real reading. A later reading that
+  // differs without a reload in between is the evidence that the page updates
+  // by itself; one that never differs says the numbers need a refresh.
+  const loadedAt = Date.now();
+  let firstReading = null;
+  let firstCampaign = null;
+
   /** Everything the page can tell us right now. */
   function readSample() {
     const text = document.body ? document.body.innerText : '';
     const place = globalThis.__queueRefreshReadPosition(text);
     const waiting = globalThis.__queueRefreshReadCount(text);
+    const estimate = globalThis.__queueRefreshReadEstimate(text);
 
     // Order matters: a position on the page beats everything, because it is
     // the only reading that means we are still in.
@@ -52,6 +60,7 @@
       position: place ? place.position : null,
       total: place ? place.total : null,
       waiting,
+      estimate,
       state
     };
   }
@@ -75,20 +84,38 @@
 
     // The fields above are whichever tab read last. Each campaign also keeps
     // its own reading, but only a real one: a half-rendered page says nothing.
-    const campaignNow = globalThis.__queueRefreshCurrentCampaign;
-    const name = campaignNow && campaignNow();
-    if (name && sample.state !== 'unknown') {
-      const { position, total, waiting, state, at } = sample;
-      patch[globalThis.__queueRefreshCampaign.readingKey(name)] = { position, total, waiting, state, at };
-    }
+    const reading = campaignReading(sample);
+    if (reading) patch[globalThis.__queueRefreshCampaign.readingKey(reading.name)] = reading.record;
     chrome.storage.local.set(patch);
+    return reading && reading.record;
   }
 
-  /** Read the page now and push it to the popup. Used when no session runs. */
+  /** This campaign's reading, with what the page said when it first loaded. */
+  function campaignReading(sample) {
+    const campaignNow = globalThis.__queueRefreshCurrentCampaign;
+    const name = campaignNow && campaignNow();
+    if (!name || sample.state === 'unknown') return null;
+
+    const { position, total, waiting, estimate, state, at } = sample;
+    // A campaign switched inside the tab, without a reload, starts over.
+    if (!firstReading || firstCampaign !== name) {
+      firstReading = { position, waiting, estimate, at };
+      firstCampaign = name;
+    }
+    return {
+      name,
+      record: { position, total, waiting, estimate, state, at, loadedAt, first: firstReading }
+    };
+  }
+
+  /**
+   * Read the page now and push it to the popup. Used when no session runs.
+   * The sample comes back with this campaign's stored reading attached, so a
+   * caller can answer with it without waiting on storage.
+   */
   function sampleNow() {
     const sample = readSample();
-    publish(sample);
-    return sample;
+    return { ...sample, campaignReading: publish(sample) };
   }
 
   const ask = (message) => chrome.runtime.sendMessage(message).catch(() => null);

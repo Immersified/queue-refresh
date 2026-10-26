@@ -12,6 +12,12 @@
     return `${total}s`;
   }
 
+  /** {min: 75, max: 135} -> "75–135 min to front". */
+  function formatEstimate(estimate) {
+    const range = estimate.min === estimate.max ? `${estimate.max}` : `${estimate.min}–${estimate.max}`;
+    return `${range} min to front`;
+  }
+
   /**
    * A routine position update.
    *
@@ -25,6 +31,7 @@
 
     if (typeof sample.position === 'number') {
       lines.push(`Position ${sample.position} of ${sample.total}`);
+      if (sample.estimate) lines.push(`Estimated ${formatEstimate(sample.estimate)}`);
 
       if (typeof previous === 'number') {
         const moved = previous - sample.position;
@@ -61,10 +68,7 @@
     const lines = ['Queue Refresh'];
 
     if (estimate) {
-      const range = estimate.min === estimate.max
-        ? `${estimate.max}`
-        : `${estimate.min}–${estimate.max}`;
-      lines.push(`Estimated ${range} min to front`);
+      lines.push(`Estimated ${formatEstimate(estimate)}`);
     } else {
       lines.push('No time estimate on the page');
     }
@@ -87,7 +91,7 @@
 
   // ---------------------------------------------------------------- commands
 
-  const COMMANDS = ['join', 'stop', 'status', 'arm', 'help'];
+  const COMMANDS = ['join', 'stop', 'status', 'refresh', 'arm', 'help'];
 
   // Telegram keeps unread messages for a day. A /join sent last night and only
   // picked up now must not fire, so anything older than this is dropped.
@@ -97,7 +101,8 @@
     'Queue Refresh commands',
     '/join - press Start on the queue tab',
     '/stop - press Stop',
-    '/status - each open campaign: loop, last message, queue',
+    '/status - each open campaign: loop, last message, queue, estimate',
+    '/refresh - reload a campaign page for fresh numbers',
     '/arm 21:30 - set the ready time',
     'With two campaigns open, add which one: /join prism, /arm signal 21:30'
   ].join('\n');
@@ -178,16 +183,65 @@
     } else {
       text = 'Queue: not joined';
     }
-    return `${text} (read ${formatElapsed(now - reading.at)} ago)`;
+    const age = now - reading.at < 5000 ? 'just now' : `${formatElapsed(now - reading.at)} ago`;
+    const lines = [`${text} (read ${age})`];
+    if (reading.estimate) lines.push(`Estimate: ${formatEstimate(reading.estimate)}`);
+    return lines.join('\n');
+  }
+
+  // A page this old that has not changed by itself is worth a refresh.
+  const STALE_PAGE_MS = 10 * 60e3;
+
+  /**
+   * What moved between the first reading after the page loaded and this one,
+   * e.g. ["434 → 431 waiting"]. Empty when nothing did.
+   */
+  function readingChanges(first, latest) {
+    const changes = [];
+    if (first.position !== latest.position && first.position != null && latest.position != null) {
+      changes.push(`position ${first.position} → ${latest.position}`);
+    }
+    if (first.waiting !== latest.waiting && first.waiting != null && latest.waiting != null) {
+      changes.push(`${first.waiting} → ${latest.waiting} waiting`);
+    }
+    const range = (e) => (e ? (e.min === e.max ? `${e.max}` : `${e.min}–${e.max}`) : null);
+    const before = range(first.estimate);
+    const after = range(latest.estimate);
+    if (before && after && before !== after) changes.push(`${before} → ${after} min`);
+    return changes;
+  }
+
+  /**
+   * Answers "does this page need a refresh?" from the page itself: how long
+   * ago it loaded, and whether its numbers have moved since without one.
+   *
+   * @param {string|null} refreshAs the command that refreshes this campaign;
+   *   null when a running join loop is refreshing it anyway
+   * @returns {string|null} null for a reading stored before this was tracked
+   */
+  function describeLoad(reading, now, refreshAs) {
+    if (!reading || !reading.loadedAt || !reading.first) return null;
+
+    const loaded = `Page loaded ${formatElapsed(now - reading.loadedAt)} ago`;
+    const changes = readingChanges(reading.first, reading);
+    if (changes.length) {
+      return `${loaded}. Changed since, without a refresh: ${changes.join(', ')}`;
+    }
+    if (refreshAs && now - reading.loadedAt >= STALE_PAGE_MS) {
+      return `${loaded}, unchanged since. ${refreshAs} for fresh numbers`;
+    }
+    return `${loaded}, unchanged since`;
   }
 
   /**
    * The reply to /status: one block per open campaign, each with its own
    * line, so nothing one tab said can be read as the other's.
    *
-   * @param {Array<{name, status, reading}>} campaigns status is
-   *   {text, at, running}, reading is {state, position, total, waiting, at};
-   *   either may be missing when that tab has not said anything yet
+   * @param {Array<{name, status, reading, refreshAs, live}>} campaigns
+   *   status is {text, at, running}; reading is {state, position, total,
+   *   waiting, estimate, at, loadedAt, first}; either may be missing when that
+   *   tab has not said anything yet. live is false when the tab did not answer
+   *   and the reading is the last one stored.
    * @param {{campaign, startedAt}|null} logging
    * @param {{campaign, readyAt, joinAt}|null} arm
    */
@@ -196,7 +250,7 @@
 
     if (!campaigns.length) blocks.push('No campaign tab is open.');
 
-    for (const { name, status, reading } of campaigns) {
+    for (const { name, status, reading, refreshAs, live = true } of campaigns) {
       const lines = [name];
       if (status) {
         lines.push(`Join loop: ${status.running ? 'running' : 'stopped'}`);
@@ -205,6 +259,10 @@
         lines.push('Join loop: not started');
       }
       lines.push(describeReading(reading, now));
+      if (!live) lines.push('Not readable right now, so this is the last stored reading');
+      const running = Boolean(status && status.running);
+      const load = describeLoad(reading, now, running ? null : refreshAs || '/refresh');
+      if (load) lines.push(load);
       blocks.push(lines.join('\n'));
     }
 
@@ -231,6 +289,10 @@
     armValue,
     splitArgs,
     formatStatus,
+    formatEstimate,
+    readingChanges,
+    describeLoad,
+    STALE_PAGE_MS,
     HELP,
     MAX_COMMAND_AGE_MS
   };
