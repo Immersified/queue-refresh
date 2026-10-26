@@ -77,3 +77,68 @@ test('a refresh that joins says so', () => {
   assert.ok(text.includes('Estimated 150 min to front'));
   assert.ok(text.endsWith('Joining now'));
 });
+
+const { parseCommand, armValue, formatStatus, MAX_COMMAND_AGE_MS } = require('../src/telegram.js');
+
+const CHAT = '123456789';
+const NOW = new Date(2026, 9, 26, 20, 0).getTime();
+
+function update(text, { chatId = 123456789, ageMs = 0 } = {}) {
+  return { update_id: 1, message: { text, chat: { id: chatId }, date: (NOW - ageMs) / 1000 } };
+}
+
+test('reads a command and its argument', () => {
+  assert.deepStrictEqual(parseCommand(update('/join'), CHAT, NOW), { command: 'join', arg: '' });
+  assert.deepStrictEqual(parseCommand(update('/arm 21:30'), CHAT, NOW), { command: 'arm', arg: '21:30' });
+  assert.deepStrictEqual(parseCommand(update('/Status@QueueBot'), CHAT, NOW), { command: 'status', arg: '' });
+});
+
+test('ignores anyone but your own chat', () => {
+  assert.strictEqual(parseCommand(update('/join', { chatId: 999 }), CHAT, NOW), null);
+});
+
+test('ignores a command left over from earlier', () => {
+  assert.strictEqual(parseCommand(update('/join', { ageMs: MAX_COMMAND_AGE_MS + 1000 }), CHAT, NOW), null);
+  assert.ok(parseCommand(update('/join', { ageMs: 60e3 }), CHAT, NOW));
+});
+
+test('answers plain text and unknown commands with help', () => {
+  assert.strictEqual(parseCommand(update('hello'), CHAT, NOW), null);
+  assert.deepStrictEqual(parseCommand(update('/dance'), CHAT, NOW), { command: 'help', arg: '' });
+  assert.strictEqual(parseCommand({ update_id: 2 }, CHAT, NOW), null);
+});
+
+test('arms for the next time the clock shows', () => {
+  assert.strictEqual(armValue('21:30', NOW), '2026-10-26T21:30');
+  assert.strictEqual(armValue('6.05', NOW), '2026-10-27T06:05');
+  assert.strictEqual(armValue('20:00', NOW), '2026-10-27T20:00');
+});
+
+test('refuses what is not a time', () => {
+  assert.strictEqual(armValue('', NOW), null);
+  assert.strictEqual(armValue('tomorrow', NOW), null);
+  assert.strictEqual(armValue('24:00', NOW), null);
+  assert.strictEqual(armValue('21:60', NOW), null);
+});
+
+test('status gives position, logging and arm', () => {
+  const text = formatStatus({
+    queueState: 'in-queue', queuePosition: 40, queueTotal: 456, queueCountAt: NOW - 90e3,
+    logActive: true, scheduleArmed: false, status: 'Joined the queue on attempt 3. Logging now.'
+  }, NOW);
+  assert.strictEqual(
+    text,
+    'Queue Refresh\nPosition 40 of 456\nRead 1m ago\nLogging\nNot armed\n' +
+      'Joined the queue on attempt 3. Logging now.'
+  );
+});
+
+test('status shows the arm and the queue length before joining', () => {
+  const text = formatStatus({
+    queueCount: 568, scheduleArmed: true,
+    scheduleReadyAt: new Date(2026, 9, 27, 8, 0).getTime(),
+    scheduleJoinAt: new Date(2026, 9, 27, 7, 0).getTime()
+  }, NOW);
+  assert.ok(text.includes('Not in the queue. 568 waiting\nNot logging\nArmed. Ready at 08:00\nJoining at 07:00'));
+  assert.ok(formatStatus({}, NOW).includes('No queue reading'));
+});

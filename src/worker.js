@@ -20,7 +20,14 @@ importScripts(
 );
 
 const { toCsv, sessionFolder } = globalThis.__queueRefreshCsv;
-const { formatUpdate, formatCheck } = globalThis.__queueRefreshTelegram;
+const {
+  formatUpdate,
+  formatCheck,
+  parseCommand,
+  armValue,
+  formatStatus,
+  HELP
+} = globalThis.__queueRefreshTelegram;
 const { shouldRevive } = globalThis.__queueRefreshWatchdog;
 const { launchDue } = globalThis.__queueRefreshSchedule;
 
@@ -244,6 +251,106 @@ async function maybeNotify(sample, startedAt) {
   await notify(formatUpdate(sample, store.telegramPosition ?? null, Date.now() - startedAt));
 }
 
+// ------------------------------------------------------- telegram commands
+
+const COMMAND_POLL = 'queue-refresh:telegram-commands';
+
+const loud = (text) => notify(`Queue Refresh\n${text}`, { silent: false });
+
+/**
+ * The same thing as pressing a popup button, on the queue tab rather than the
+ * active one. Brought to the front first: a background tab has its timers
+ * throttled and cannot be screenshotted.
+ *
+ * @returns {Promise<object|null>} the page's answer, null when there is no tab
+ */
+async function pressOnQueueTab(type, extra = {}) {
+  const [tab] = await chrome.tabs.query({ url: siteMatches() });
+  if (!tab) return null;
+
+  await chrome.windows.update(tab.windowId, { focused: true }).catch(() => null);
+  await chrome.tabs.update(tab.id, { active: true });
+  return chrome.tabs.sendMessage(tab.id, { type, ...extra }).catch(() => null);
+}
+
+const NO_TAB = 'No queue tab is open, or the page is not answering. Open it in the browser first.';
+
+async function runCommand({ command, arg }) {
+  if (command === 'join') {
+    const answer = await pressOnQueueTab('start');
+    return loud(answer ? 'Joining. Pressed Start on the queue tab.' : NO_TAB);
+  }
+
+  if (command === 'stop') {
+    const answer = await pressOnQueueTab('stop');
+    if (!answer) return loud(NO_TAB);
+    // Stop leaves an arm alone, as the popup's Stop does. Say so, or a stop
+    // sent at night reads as the end of everything.
+    const { scheduleArmed } = await chrome.storage.local.get('scheduleArmed');
+    return loud(scheduleArmed ? 'Stopped. Still armed: disarm in the popup.' : 'Stopped.');
+  }
+
+  if (command === 'arm') {
+    const value = armValue(arg, Date.now());
+    if (!value) return loud('Send the ready time as /arm 21:30');
+    const answer = await pressOnQueueTab('arm', { value });
+    return loud(answer ? answer.schedule || 'Armed.' : NO_TAB);
+  }
+
+  if (command === 'status') {
+    const store = await chrome.storage.local.get([
+      'status',
+      'queueState',
+      'queuePosition',
+      'queueTotal',
+      'queueCount',
+      'queueCountAt',
+      'logActive',
+      'scheduleArmed',
+      'scheduleReadyAt',
+      'scheduleJoinAt'
+    ]);
+    return notify(formatStatus(store, Date.now()), { silent: false });
+  }
+
+  return notify(HELP, { silent: false });
+}
+
+/**
+ * Picks up anything sent to the bot since the last look.
+ *
+ * Short polls on an alarm rather than one long poll: the worker is killed
+ * when idle, and an alarm is what reliably wakes it again.
+ */
+async function pollCommands() {
+  if (!TELEGRAM) return;
+
+  try {
+    const { telegramOffset = 0 } = await chrome.storage.local.get('telegramOffset');
+    const response = await fetch(
+      `https://api.telegram.org/bot${TELEGRAM.token}/getUpdates` +
+        `?offset=${telegramOffset}&timeout=0&allowed_updates=${encodeURIComponent('["message"]')}`
+    );
+    const body = await response.json().catch(() => ({}));
+    if (!body.ok) throw new Error(body.description || `HTTP ${response.status}`);
+    if (!body.result.length) return;
+
+    // Claimed before acting, so a worker killed mid-command cannot run it twice.
+    const last = body.result[body.result.length - 1].update_id;
+    await chrome.storage.local.set({ telegramOffset: last + 1 });
+
+    for (const update of body.result) {
+      const command = parseCommand(update, TELEGRAM.chatId, Date.now());
+      if (command) await runCommand(command);
+    }
+  } catch (error) {
+    await chrome.storage.local.set({ logTelegramStatus: `FAILED reading commands: ${error.message}` });
+  }
+}
+
+// Thirty seconds is the shortest alarm Chrome allows.
+if (TELEGRAM) chrome.alarms.create(COMMAND_POLL, { periodInMinutes: 0.5 });
+
 // ------------------------------------------------------------------ watchdog
 
 const WATCHDOG = 'queue-refresh:watchdog';
@@ -431,6 +538,7 @@ async function fireAlarm() {
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM) fireAlarm();
   if (alarm.name === WATCHDOG) checkAlive();
+  if (alarm.name === COMMAND_POLL) pollCommands();
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

@@ -614,7 +614,13 @@
     if (message.type === 'read-count') {
       logger.sampleNow();
     }
-    if (message.type === 'arm') arm(message.value);
+    if (message.type === 'arm') {
+      // Answered once armed, so a Telegram /arm can reply with what happened.
+      arm(message.value)
+        .then(() => chrome.storage.local.get('scheduleStatus'))
+        .then(({ scheduleStatus }) => sendResponse({ active: isActive(), schedule: scheduleStatus }));
+      return true;
+    }
     if (message.type === 'disarm') disarm();
     if (message.type === 'schedule-tick') scheduleTick();
     sendResponse({ active: isActive() });

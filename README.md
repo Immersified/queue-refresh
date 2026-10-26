@@ -269,6 +269,45 @@ never prints it. It is still readable by anyone who can read the extension
 folder, so treat it as you would any credential on that machine. If it leaks,
 `/revoke` in BotFather.
 
+### Commands from your phone
+
+Send these to your bot. It answers in the same chat.
+
+| Command | What it does |
+| --- | --- |
+| `/join` | Presses **Start** on the queue tab |
+| `/stop` | Presses **Stop**. An arm is left alone, and the reply says so |
+| `/status` | Position (or queue length), logging, arm, and the latest status line |
+| `/arm 21:30` | Arms for the next 21:30 on the VPS clock: today, or tomorrow if it has passed |
+| `/help` | Lists the commands. Any unknown command gets this too |
+
+```
+Queue Refresh
+Position 40 of 456
+Read 1m ago
+Logging
+Not armed
+Joined the queue on attempt 3. Logging now.
+```
+
+Things to know:
+
+- **Up to 30 seconds' delay.** The extension checks for commands every 30
+  seconds, the shortest Chrome allows.
+- **The queue tab must be open.** Telegram cannot start the browser. With no
+  tab, the reply says so.
+- **The tab is brought to the front**, as the watchdog does, so its timers run
+  at full speed and screenshots work.
+- **Only your `TELEGRAM_CHAT_ID` is obeyed.** Messages from anyone else are
+  ignored. If the chat id is a group, everyone in the group can send commands.
+- **Old commands are dropped.** Telegram keeps unread messages for a day; one
+  older than 5 minutes is ignored, so last night's `/join` cannot fire now.
+
+Nothing to set up beyond the steps above. If reading commands fails, the popup's
+Telegram line says `FAILED reading commands`. `Conflict` there means something
+else is reading the same bot, such as a webhook or a second copy of the
+extension.
+
 ### When Telegram fails
 
 The popup carries the last send result, red when it failed. Telegram's own
@@ -784,7 +823,7 @@ stable handle, so no manual setup is needed.
 | `src/csv.js` | Builds the CSV text and names each session folder |
 | `src/schedule.js` | Reads the picked time, plans the join time, counts down |
 | `src/queue-estimate.js` | Reads the "Estimated 60–120 min to front" line off the page |
-| `src/telegram.js` | Builds the text that goes to your phone |
+| `src/telegram.js` | Builds the text that goes to your phone, and reads the commands that come back |
 | `src/watchdog.js` | Decides when a silent page needs reloading |
 | `check-telegram.js` | Sends one test message to prove the bot works |
 | `windows/start-edge.bat` | Launches Edge with the flags that survive a disconnect |
