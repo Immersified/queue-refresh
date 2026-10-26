@@ -123,13 +123,24 @@
   async function tick() {
     const {
       logActive,
+      logCampaign,
       logLastShotAt = 0,
       logExitStreak = 0
-    } = await chrome.storage.local.get(['logActive', 'logLastShotAt', 'logExitStreak']);
+    } = await chrome.storage.local.get([
+      'logActive',
+      'logCampaign',
+      'logLastShotAt',
+      'logExitStreak'
+    ]);
     if (!logActive) return stop();
 
     const sample = readSample();
     publish(sample);
+
+    // Every campaign tab runs this clock, but the session belongs to one. The
+    // others would log their own rows into it, double the screenshots past
+    // Chrome's per-second limit, and end it the moment they read "not joined".
+    if (!isSessionTab(logCampaign)) return;
 
     // Logged before any decision to stop: the row that shows the queue run
     // ending is the most interesting one in the file.
@@ -152,6 +163,13 @@
     const streak = logExitStreak + 1;
     await chrome.storage.local.set({ logExitStreak: streak });
     if (streak >= EXIT_CONFIRMATIONS) await finish(reason);
+  }
+
+  /** Older sessions stored the tab title rather than the campaign name. */
+  function isSessionTab(logCampaign) {
+    if (!logCampaign) return true;
+    const campaignNow = globalThis.__queueRefreshCurrentCampaign;
+    return (campaignNow && campaignNow()) === logCampaign || document.title === logCampaign;
   }
 
   function run() {
@@ -178,7 +196,8 @@
     if (logActive) return run();
 
     await chrome.storage.local.set({ logExitStreak: 0 });
-    await ask({ type: 'log-start', url: location.href });
+    const campaignNow = globalThis.__queueRefreshCurrentCampaign;
+    await ask({ type: 'log-start', url: location.href, campaign: campaignNow && campaignNow() });
     run();
   }
 

@@ -133,19 +133,40 @@ async function addSample(sample, campaign) {
  * was nothing composited to read: a page mid-navigation, or a tab that has
  * only just come to the front. A second costs nothing and usually lands.
  */
-async function capture(windowId) {
-  const shoot = () =>
-    chrome.tabs.captureVisibleTab(windowId, { format: 'jpeg', quality: 85 });
+// Chrome allows two captureVisibleTab calls a second and fails the third with
+// MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND. Shots run one at a time (see
+// takeShot) and each capture keeps this far from the last.
+const CAPTURE_GAP_MS = 600;
+let lastCaptureAt = 0;
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function captureSpaced(windowId) {
+  await sleep(Math.max(0, lastCaptureAt + CAPTURE_GAP_MS - Date.now()));
+  lastCaptureAt = Date.now();
+  return chrome.tabs.captureVisibleTab(windowId, { format: 'jpeg', quality: 85 });
+}
+
+async function capture(windowId) {
   try {
-    return await shoot();
+    return await captureSpaced(windowId);
   } catch (error) {
-    await new Promise((resolve) => setTimeout(resolve, 750));
-    return shoot();
+    await sleep(750);
+    return captureSpaced(windowId);
   }
 }
 
-async function takeShot(tabId, { scheduled = true } = {}) {
+// One shot at a time: two at once would both read the same logShots and save
+// under the same number.
+let shotQueue = Promise.resolve();
+
+function takeShot(tabId, options) {
+  const shot = shotQueue.then(() => takeOneShot(tabId, options));
+  shotQueue = shot.catch(() => null);
+  return shot;
+}
+
+async function takeOneShot(tabId, { scheduled = true } = {}) {
   const store = await chrome.storage.local.get(['logSession', 'logShots']);
   if (!store.logSession) {
     return setShotStatus('No session running. Press Start or Log only first.');
