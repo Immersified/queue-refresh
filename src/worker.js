@@ -32,7 +32,7 @@ const {
 } = globalThis.__queueRefreshTelegram;
 const { shouldRevive } = globalThis.__queueRefreshWatchdog;
 const { launchDue } = globalThis.__queueRefreshSchedule;
-const { pickTabs, shortName } = globalThis.__queueRefreshCampaign;
+const { pickTabs, shortName, statusKey, readingKey } = globalThis.__queueRefreshCampaign;
 
 // null when .env carries no token, which is how Telegram stays optional.
 const TELEGRAM = (globalThis.QUEUE_REFRESH_CONFIG || {}).telegram || null;
@@ -69,6 +69,7 @@ async function startSession(url, campaign) {
   await chrome.storage.local.set({
     logActive: true,
     logSession: folder,
+    logCampaign: campaign,
     logRows: [],
     logShots: 0,
     logStartedAt: Date.now(),
@@ -266,7 +267,16 @@ const COMMAND_POLL = 'queue-refresh:telegram-commands';
 const loud = (text, campaign = null) =>
   notify(`Queue Refresh\n${text}`, { silent: false, campaign });
 
-const NO_TAB = 'No queue tab is open, or the page is not answering. Open it in the browser first.';
+const NO_TAB = 'No campaign tab is open. Open the campaign page in the browser first.';
+
+const REBUILD_NEEDED =
+  'The extension was updated but not rebuilt, so the page code cannot start.\n' +
+  'On the VPS: run node build.js, press the reload arrow on the extension card, ' +
+  'then reload the campaign tabs.';
+
+// How long a reloaded tab gets to come back before giving up on it.
+const PAGE_LOAD_MS = 30000;
+const ANSWER_RETRIES = 10;
 
 /**
  * The one tab a command means. With one campaign open no name is needed; with
@@ -296,16 +306,126 @@ async function chooseTab(name, example) {
 }
 
 /**
+ * build.js writes the page scripts into manifest.json. A folder that was
+ * pulled but not rebuilt loads the new controller without the file it needs,
+ * and the controller refuses to start, so no tab can answer.
+ */
+function pageCodeLoaded() {
+  return chrome.runtime.getManifest().content_scripts.some((script) =>
+    (script.js || []).includes('src/campaign.js')
+  );
+}
+
+async function ask(tabId, message) {
+  try {
+    return { answer: await chrome.tabs.sendMessage(tabId, message) };
+  } catch (error) {
+    return { error };
+  }
+}
+
+function waitForLoad(tabId) {
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      resolve();
+    };
+    const onUpdated = (id, info) => {
+      if (id === tabId && info.status === 'complete') finish();
+    };
+    const timer = setTimeout(finish, PAGE_LOAD_MS);
+    chrome.tabs.onUpdated.addListener(onUpdated);
+  });
+}
+
+/**
  * The same thing as pressing a popup button, on that tab rather than the
  * active one. Brought to the front first: a background tab has its timers
  * throttled and cannot be screenshotted.
  *
- * @returns {Promise<object|null>} the page's answer, null when it did not answer
+ * A tab that does not answer was open before the extension was reloaded, and
+ * runs no current page code until it is reloaded too. So it is reloaded once
+ * and asked again, rather than leaving that to be worked out from a phone.
+ *
+ * @returns {Promise<{answer: object, reloaded: boolean}|{problem: string}>}
  */
 async function pressOnTab(tab, type, extra = {}) {
+  if (!pageCodeLoaded()) return { problem: REBUILD_NEEDED };
+
   await chrome.windows.update(tab.windowId, { focused: true }).catch(() => null);
   await chrome.tabs.update(tab.id, { active: true });
-  return chrome.tabs.sendMessage(tab.id, { type, ...extra }).catch(() => null);
+
+  const message = { type, ...extra };
+  const first = await ask(tab.id, message);
+  if (!first.error) return { answer: first.answer, reloaded: false };
+
+  await chrome.tabs.reload(tab.id);
+  await waitForLoad(tab.id);
+
+  // The page code starts a moment after the load completes.
+  for (let i = 0; i < ANSWER_RETRIES; i++) {
+    const retry = await ask(tab.id, message);
+    if (!retry.error) return { answer: retry.answer, reloaded: true };
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  return {
+    problem:
+      'The tab did not answer, even after a reload. Check that the page loads.\n' +
+      `Browser said: ${first.error.message}`
+  };
+}
+
+const RELOADED = 'The tab was running an old version of the extension, so I reloaded it first.\n';
+
+/** The press, then the reply, headed with the campaign the page says it is. */
+async function pressAndReply(tab, type, extra, describe) {
+  const result = await pressOnTab(tab, type, extra);
+  if (result.problem) return loud(result.problem, tab.title);
+
+  const before = result.reloaded ? RELOADED : '';
+  const campaign = (result.answer && result.answer.campaign) || tab.title;
+  return loud(before + (await describe(result.answer)), campaign);
+}
+
+/** Each open campaign with its own status line and reading, for /status. */
+async function collectStatus(name) {
+  const tabs = pickTabs(await chrome.tabs.query({ url: siteMatches() }), name);
+  const store = await chrome.storage.local.get(null);
+
+  // Stored under the name the page shows, which the tab title contains.
+  const prefixes = [statusKey(''), readingKey('')];
+  const known = Object.keys(store).flatMap((key) => {
+    const prefix = prefixes.find((p) => key.startsWith(p));
+    return prefix ? [key.slice(prefix.length)] : [];
+  });
+
+  const campaigns = tabs.map((tab) => {
+    const title = (tab.title || '').toLowerCase();
+    const [match] = known
+      .filter((stored) => title.includes(stored.toLowerCase()))
+      .sort((a, b) => b.length - a.length);
+    const campaign = match || tab.title;
+    return {
+      name: campaign,
+      status: store[statusKey(campaign)],
+      reading: store[readingKey(campaign)]
+    };
+  });
+
+  return {
+    campaigns,
+    logging: store.logActive
+      ? { campaign: store.logCampaign, startedAt: store.logStartedAt }
+      : null,
+    arm: store.scheduleArmed && store.scheduleReadyAt
+      ? {
+        campaign: store.scheduleCampaign,
+        readyAt: store.scheduleReadyAt,
+        joinAt: store.scheduleJoinAt
+      }
+      : null
+  };
 }
 
 async function runCommand({ command, arg }) {
@@ -314,26 +434,25 @@ async function runCommand({ command, arg }) {
   if (command === 'join') {
     const choice = await chooseTab(name, 'join NAME');
     if (!choice.tab) return loud(choice.reply);
-    const answer = await pressOnTab(choice.tab, 'start');
-    return loud(answer ? 'Joining. Pressed Start.' : NO_TAB, choice.tab.title);
+    return pressAndReply(choice.tab, 'start', {}, () =>
+      'Pressed Start. You will get a message when it joins or stops.'
+    );
   }
 
   if (command === 'stop') {
     const choice = await chooseTab(name, 'stop NAME');
     if (!choice.tab) return loud(choice.reply);
-    const answer = await pressOnTab(choice.tab, 'stop');
-    if (!answer) return loud(NO_TAB, choice.tab.title);
-    // Stop leaves an arm alone, as the popup's Stop does. Say so, or a stop
-    // sent at night reads as the end of everything.
-    const { scheduleArmed, scheduleCampaign } = await chrome.storage.local.get([
-      'scheduleArmed',
-      'scheduleCampaign'
-    ]);
-    const armed = scheduleCampaign ? `Still armed for ${scheduleCampaign}` : 'Still armed';
-    return loud(
-      scheduleArmed ? `Stopped. ${armed}: disarm in the popup.` : 'Stopped.',
-      choice.tab.title
-    );
+    return pressAndReply(choice.tab, 'stop', {}, async () => {
+      // Stop leaves an arm alone, as the popup's Stop does. Say so, or a stop
+      // sent at night reads as the end of everything.
+      const { scheduleArmed, scheduleCampaign } = await chrome.storage.local.get([
+        'scheduleArmed',
+        'scheduleCampaign'
+      ]);
+      if (!scheduleArmed) return 'Stopped.';
+      const armed = scheduleCampaign ? `Still armed for ${scheduleCampaign}` : 'Still armed';
+      return `Stopped. ${armed}: disarm in the popup.`;
+    });
   }
 
   if (command === 'arm') {
@@ -341,28 +460,15 @@ async function runCommand({ command, arg }) {
     if (!value) return loud('Send the ready time as /arm 21:30');
     const choice = await chooseTab(name, `arm NAME ${time}`);
     if (!choice.tab) return loud(choice.reply);
-    const answer = await pressOnTab(choice.tab, 'arm', { value });
-    return loud(answer ? answer.schedule || 'Armed.' : NO_TAB, choice.tab.title);
+    return pressAndReply(choice.tab, 'arm', { value }, (answer) => answer.schedule || 'Armed.');
   }
 
   if (command === 'status') {
-    const tabs = await chrome.tabs.query({ url: siteMatches() });
-    const store = await chrome.storage.local.get([
-      'status',
-      'queueState',
-      'queuePosition',
-      'queueTotal',
-      'queueCount',
-      'queueCountAt',
-      'logActive',
-      'scheduleArmed',
-      'scheduleReadyAt',
-      'scheduleJoinAt',
-      'scheduleCampaign',
-      'statusCampaign'
-    ]);
-    const open = tabs.map((tab) => tab.title);
-    return notify(formatStatus(store, Date.now(), open), { silent: false });
+    const status = await collectStatus(name);
+    if (name && !status.campaigns.length) {
+      return loud(`No open campaign matches "${name}".`);
+    }
+    return notify(formatStatus(status, Date.now()), { silent: false });
   }
 
   return notify(HELP, { silent: false });

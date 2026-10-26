@@ -121,28 +121,6 @@ test('refuses what is not a time', () => {
   assert.strictEqual(armValue('21:60', NOW), null);
 });
 
-test('status gives position, logging and arm', () => {
-  const text = formatStatus({
-    queueState: 'in-queue', queuePosition: 40, queueTotal: 456, queueCountAt: NOW - 90e3,
-    logActive: true, scheduleArmed: false, status: 'Joined the queue on attempt 3. Logging now.'
-  }, NOW);
-  assert.strictEqual(
-    text,
-    'Queue Refresh\nPosition 40 of 456\nRead 1m ago\nLogging\nNot armed\n' +
-      'Joined the queue on attempt 3. Logging now.'
-  );
-});
-
-test('status shows the arm and the queue length before joining', () => {
-  const text = formatStatus({
-    queueCount: 568, scheduleArmed: true,
-    scheduleReadyAt: new Date(2026, 9, 27, 8, 0).getTime(),
-    scheduleJoinAt: new Date(2026, 9, 27, 7, 0).getTime()
-  }, NOW);
-  assert.ok(text.includes('Not in the queue. 568 waiting\nNot logging\nArmed. Ready at 08:00\nJoining at 07:00'));
-  assert.ok(formatStatus({}, NOW).includes('No queue reading'));
-});
-
 const { splitArgs } = require('../src/telegram.js');
 
 test('takes the campaign and the time in either order', () => {
@@ -152,13 +130,61 @@ test('takes the campaign and the time in either order', () => {
   assert.deepStrictEqual(splitArgs(''), { name: '', time: '' });
 });
 
-test('status says which campaign the status line and the arm belong to', () => {
+test('status gives each campaign its own block', () => {
   const text = formatStatus({
-    scheduleArmed: true, scheduleCampaign: 'Guild Prism V2',
-    scheduleReadyAt: new Date(2026, 9, 27, 8, 0).getTime(),
-    status: 'Attempt 3: queue full.', statusCampaign: 'Guild Signal V2'
-  }, NOW, ['Guild Signal V2', 'Guild Prism V2']);
-  assert.ok(text.startsWith('Queue Refresh\nOpen: Guild Signal V2, Guild Prism V2\n'));
-  assert.ok(text.includes('Armed for Guild Prism V2. Ready at 08:00'));
-  assert.ok(text.endsWith('Guild Signal V2: Attempt 3: queue full.'));
+    campaigns: [
+      {
+        name: 'Guild Signal V2',
+        status: {
+          text: 'Stopped: no enabled "Join queue" button after 30s.',
+          at: new Date(2026, 9, 26, 17, 13).getTime(),
+          running: false
+        },
+        reading: { state: 'not-joined', waiting: 434, at: NOW - 14 * 60e3 }
+      },
+      {
+        name: 'Guild Prism V2',
+        status: { text: 'Attempt 3: queue full.', at: new Date(2026, 9, 26, 19, 59).getTime(), running: true },
+        reading: { state: 'in-queue', position: 40, total: 456, at: NOW - 30e3 }
+      }
+    ],
+    logging: null,
+    arm: null
+  }, NOW);
+
+  assert.strictEqual(text, [
+    'Queue Refresh · status',
+    '',
+    'Guild Signal V2',
+    'Join loop: stopped',
+    'Last (17:13): Stopped: no enabled "Join queue" button after 30s.',
+    'Queue: not joined, 434 waiting (read 14m ago)',
+    '',
+    'Guild Prism V2',
+    'Join loop: running',
+    'Last (19:59): Attempt 3: queue full.',
+    'Queue: position 40 of 456 (read 30s ago)',
+    '',
+    'Logging: off',
+    'Armed: no'
+  ].join('\n'));
+});
+
+test('status says plainly when a tab has said nothing yet', () => {
+  const text = formatStatus({ campaigns: [{ name: 'Guild Prism V2' }], logging: null, arm: null }, NOW);
+  assert.ok(text.includes('Guild Prism V2\nJoin loop: not started\nQueue: no reading yet'));
+  assert.ok(formatStatus({ campaigns: [], logging: null, arm: null }, NOW).includes('No campaign tab is open.'));
+});
+
+test('status names the campaign that is logging and the one that is armed', () => {
+  const text = formatStatus({
+    campaigns: [],
+    logging: { campaign: 'Guild Signal V2', startedAt: NOW - 64 * 60e3 },
+    arm: {
+      campaign: 'Guild Prism V2',
+      readyAt: new Date(2026, 9, 27, 8, 0).getTime(),
+      joinAt: new Date(2026, 9, 27, 7, 0).getTime()
+    }
+  }, NOW);
+  assert.ok(text.endsWith('Logging: Guild Signal V2, for 1h 04m\nArmed: Guild Prism V2, ready 08:00, joining 07:00'));
 });

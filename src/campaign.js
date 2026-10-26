@@ -38,7 +38,12 @@
     return words.find((word) => !shared(word)) || words[0] || '';
   }
 
-  const api = { readCampaign, pickTabs, shortName };
+  // One storage key per campaign rather than one shared object, so two tabs
+  // writing at the same moment cannot overwrite each other's entry.
+  const statusKey = (name) => `campaign-status:${name}`;
+  const readingKey = (name) => `campaign-reading:${name}`;
+
+  const api = { readCampaign, pickTabs, shortName, statusKey, readingKey };
   root.__queueRefreshCampaign = api;
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = api;

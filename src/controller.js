@@ -78,16 +78,43 @@
     if (fromQueueLine) sessionStorage.setItem(KEY_CAMPAIGN, fromQueueLine);
     return sessionStorage.getItem(KEY_CAMPAIGN) || campaigns.readCampaign('', document.title);
   }
+  // The logger labels its readings with this.
+  globalThis.__queueRefreshCurrentCampaign = campaign;
 
-  // The status line is shared by every tab, so it says whose it is.
+  /**
+   * The shared line is whatever tab spoke last. Each campaign also keeps its
+   * own, so the popup and /status can show a tab's line and not its neighbour's.
+   */
   function setStatus(text) {
     console.log('[Queue Refresh]', text);
-    chrome.storage.local.set({ status: text, statusCampaign: campaign(), updatedAt: Date.now() });
+    const name = campaign();
+    const now = Date.now();
+    const patch = { status: text, statusCampaign: name, updatedAt: now };
+    if (name) patch[campaigns.statusKey(name)] = { text, at: now, running: isActive() };
+    chrome.storage.local.set(patch);
   }
 
   function stop(text) {
     sessionStorage.setItem(KEY_ACTIVE, '0');
     setStatus(text);
+  }
+
+  /**
+   * A stop nobody asked for. Sent to the phone too: after a /join from
+   * Telegram, this is the only way to hear that it did not work.
+   */
+  function fail(text) {
+    stop(text);
+    tellWorker({ type: 'notify', text: `Queue Refresh\n${text}`, silent: false });
+  }
+
+  /** What is on the page instead, so a missing button can be explained. */
+  function describeButtons() {
+    const labels = Array.from(document.querySelectorAll('button'))
+      .map((button) => button.textContent.trim())
+      .filter(Boolean);
+    const unique = [...new Set(labels)].slice(0, 8);
+    return unique.length ? `Buttons on the page: ${unique.join(', ')}` : 'No buttons on the page.';
   }
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -172,7 +199,7 @@
     const attempt = Number(sessionStorage.getItem(KEY_ATTEMPTS) || '0') + 1;
 
     if (attempt > MAX_ATTEMPTS) {
-      return stop(`Stopped: hit the ${MAX_ATTEMPTS} attempt limit.`);
+      return fail(`Stopped: hit the ${MAX_ATTEMPTS} attempt limit.`);
     }
 
     if (CLICK_DELAY_MS > 0) {
@@ -189,7 +216,11 @@
       // no button, is a different page and still stops the loop.
       if (blank.isBlankPage(pageText())) return reloadBlankPage();
 
-      return stop(`Stopped: no enabled "${BUTTON_LABEL}" button after ${BUTTON_TIMEOUT_MS / 1000}s.`);
+      const disabled = findJoinButton() ? ' It is there, but disabled.' : '';
+      return fail(
+        `Stopped: no enabled "${BUTTON_LABEL}" button after ${BUTTON_TIMEOUT_MS / 1000}s.` +
+          `${disabled}\n${describeButtons()}`
+      );
     }
 
     // Counted here, not on arrival, so the attempt budget is spent on clicks:
@@ -218,9 +249,9 @@
       return stop(`Joined the queue on attempt ${attempt}. Logging now.`);
     }
     if (status === 'timeout') {
-      return stop(`Stopped: no joinTaskQueue response within ${RESPONSE_TIMEOUT_MS / 1000}s.`);
+      return fail(`Stopped: no joinTaskQueue response within ${RESPONSE_TIMEOUT_MS / 1000}s.`);
     }
-    return stop(`Stopped on attempt ${attempt}:${detail}`);
+    return fail(`Stopped on attempt ${attempt}:${detail}`);
   }
 
   /**
@@ -235,7 +266,7 @@
     sessionStorage.setItem(KEY_BLANKS, String(blanks));
 
     if (blanks > MAX_BLANK_RELOADS) {
-      return stop(`Stopped: the page came back blank ${MAX_BLANK_RELOADS} times in a row.`);
+      return fail(`Stopped: the page came back blank ${MAX_BLANK_RELOADS} times in a row.`);
     }
 
     const wait = nextRetryDelay();
@@ -666,12 +697,13 @@
       // Answered once armed, so a Telegram /arm can reply with what happened.
       arm(message.value)
         .then(() => chrome.storage.local.get('scheduleStatus'))
-        .then(({ scheduleStatus }) => sendResponse({ active: isActive(), schedule: scheduleStatus }));
+        .then(({ scheduleStatus }) =>
+          sendResponse({ active: isActive(), campaign: campaign(), schedule: scheduleStatus }));
       return true;
     }
     if (message.type === 'disarm') disarm();
     if (message.type === 'schedule-tick') scheduleTick();
-    sendResponse({ active: isActive() });
+    sendResponse({ active: isActive(), campaign: campaign() });
     return false;
   });
 

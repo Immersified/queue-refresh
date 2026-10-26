@@ -97,7 +97,7 @@
     'Queue Refresh commands',
     '/join - press Start on the queue tab',
     '/stop - press Stop',
-    '/status - where things stand',
+    '/status - each open campaign: loop, last message, queue',
     '/arm 21:30 - set the ready time',
     'With two campaigns open, add which one: /join prism, /arm signal 21:30'
   ].join('\n');
@@ -164,39 +164,63 @@
       `T${pad(date.getHours())}:${pad(date.getMinutes())}`;
   }
 
+  /** "Queue: position 40 of 456", from one campaign's own reading. */
+  function describeReading(reading, now) {
+    if (!reading) return 'Queue: no reading yet';
+
+    let text;
+    if (reading.state === 'in-queue') {
+      text = `Queue: position ${reading.position} of ${reading.total}`;
+    } else if (reading.state === 'offer-expired') {
+      text = 'Queue: task offer expired';
+    } else if (typeof reading.waiting === 'number') {
+      text = `Queue: not joined, ${reading.waiting} waiting`;
+    } else {
+      text = 'Queue: not joined';
+    }
+    return `${text} (read ${formatElapsed(now - reading.at)} ago)`;
+  }
+
   /**
-   * The reply to /status, built from what the popup also reads.
+   * The reply to /status: one block per open campaign, each with its own
+   * line, so nothing one tab said can be read as the other's.
    *
-   * @param {string[]} open the campaigns with a tab open right now
+   * @param {Array<{name, status, reading}>} campaigns status is
+   *   {text, at, running}, reading is {state, position, total, waiting, at};
+   *   either may be missing when that tab has not said anything yet
+   * @param {{campaign, startedAt}|null} logging
+   * @param {{campaign, readyAt, joinAt}|null} arm
    */
-  function formatStatus(store, now, open = []) {
-    const lines = ['Queue Refresh'];
-    if (open.length) lines.push(`Open: ${open.join(', ')}`);
+  function formatStatus({ campaigns, logging, arm }, now) {
+    const blocks = ['Queue Refresh · status'];
 
-    if (store.queueState === 'in-queue' && typeof store.queuePosition === 'number') {
-      lines.push(`Position ${store.queuePosition} of ${store.queueTotal}`);
-    } else if (typeof store.queueCount === 'number') {
-      lines.push(`Not in the queue. ${store.queueCount} waiting`);
+    if (!campaigns.length) blocks.push('No campaign tab is open.');
+
+    for (const { name, status, reading } of campaigns) {
+      const lines = [name];
+      if (status) {
+        lines.push(`Join loop: ${status.running ? 'running' : 'stopped'}`);
+        lines.push(`Last (${formatClock(status.at)}): ${status.text}`);
+      } else {
+        lines.push('Join loop: not started');
+      }
+      lines.push(describeReading(reading, now));
+      blocks.push(lines.join('\n'));
+    }
+
+    const footer = [];
+    footer.push(logging
+      ? `Logging: ${logging.campaign || 'on'}, for ${formatElapsed(now - logging.startedAt)}`
+      : 'Logging: off');
+    if (arm) {
+      const join = arm.joinAt ? `, joining ${formatClock(arm.joinAt)}` : '';
+      footer.push(`Armed: ${arm.campaign || 'yes'}, ready ${formatClock(arm.readyAt)}${join}`);
     } else {
-      lines.push('No queue reading');
+      footer.push('Armed: no');
     }
-    if (store.queueCountAt) lines.push(`Read ${formatElapsed(now - store.queueCountAt)} ago`);
+    blocks.push(footer.join('\n'));
 
-    lines.push(store.logActive ? 'Logging' : 'Not logging');
-
-    if (store.scheduleArmed && store.scheduleReadyAt) {
-      const which = store.scheduleCampaign ? ` for ${store.scheduleCampaign}` : '';
-      lines.push(`Armed${which}. Ready at ${formatClock(store.scheduleReadyAt)}`);
-      if (store.scheduleJoinAt) lines.push(`Joining at ${formatClock(store.scheduleJoinAt)}`);
-    } else {
-      lines.push('Not armed');
-    }
-
-    // Shared by every tab, so it says whose it is.
-    if (store.status) {
-      lines.push(store.statusCampaign ? `${store.statusCampaign}: ${store.status}` : store.status);
-    }
-    return lines.join('\n');
+    return blocks.join('\n\n');
   }
 
   const api = {

@@ -10,11 +10,41 @@ const autoStartEl = document.getElementById('auto-start');
 const hintEl = document.querySelector('#launch .hint');
 const challengeEl = document.getElementById('challenge');
 const { formatCountdown, nextCheckAt } = globalThis.__queueRefreshSchedule;
+const { statusKey, readingKey } = globalThis.__queueRefreshCampaign;
 
-// The status line is shared by every tab, so it says whose it is.
-function render({ status, statusCampaign }) {
+// The campaign of the tab you are looking at, as its page reports it. Null
+// until the page answers, and on a page that is not a campaign.
+let tabCampaign = null;
+
+/**
+ * This tab's own line when it has one. Otherwise the shared line, which is
+ * whichever tab spoke last, so it says whose it is.
+ */
+function render(stored) {
+  const own = tabCampaign && stored[statusKey(tabCampaign)];
+  if (own) {
+    statusEl.textContent = own.text;
+    tabEl.textContent = `This tab: ${tabCampaign} · join loop ${own.running ? 'running' : 'stopped'}`;
+    return;
+  }
+  if (tabCampaign) tabEl.textContent = `This tab: ${tabCampaign}`;
+
+  const { status, statusCampaign } = stored;
   const text = status || 'Idle.';
   statusEl.textContent = statusCampaign && status ? `${statusCampaign}: ${text}` : text;
+}
+
+/** This tab's own reading, in the shape renderQueue already takes. */
+function queueFields(stored) {
+  const reading = tabCampaign && stored[readingKey(tabCampaign)];
+  if (!reading) return stored;
+  return {
+    queueState: reading.state,
+    queuePosition: reading.position,
+    queueTotal: reading.total,
+    queueCount: reading.waiting,
+    queueCountAt: reading.at
+  };
 }
 
 function describeAge(ms) {
@@ -61,11 +91,13 @@ function bold(text) {
   return el;
 }
 
-function renderLog({ logActive, logStatus, logSession, logShotStatus }) {
+function renderLog({ logActive, logStatus, logSession, logShotStatus, logCampaign }) {
   if (!logActive) {
     logEl.textContent = logStatus || 'Not logging.';
   } else {
-    logEl.textContent = `${logStatus || 'Logging…'}\nFolder: queue-refresh/${logSession}/`;
+    // One session for all tabs, so it names the campaign it belongs to.
+    const which = logCampaign ? `Logging ${logCampaign}\n` : '';
+    logEl.textContent = `${which}${logStatus || 'Logging…'}\nFolder: queue-refresh/${logSession}/`;
   }
 
   // Its own line, because a screenshot failure is the one thing that goes
@@ -140,12 +172,20 @@ function renderChallenge({ challengeAt }) {
 async function send(type, extra = {}, { quiet = false } = {}) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   try {
-    await chrome.tabs.sendMessage(tab.id, { type, ...extra });
+    const answer = await chrome.tabs.sendMessage(tab.id, { type, ...extra });
+    if (answer && answer.campaign && answer.campaign !== tabCampaign) {
+      tabCampaign = answer.campaign;
+      refresh();
+    }
     return true;
   } catch (e) {
     // Only a button press earns an error; the reading on open stays silent.
+    // A campaign tab that was open before the extension was reloaded lands
+    // here too, and that is the usual case, so it is named first.
     if (!quiet) {
-      render({ status: 'This page is not covered by the extension. Check "matches" in manifest.json.' });
+      statusEl.textContent =
+        'This tab is not answering. Reload it (F5) and try again. Still nothing: ' +
+        'run node build.js and reload the extension. Not a campaign page: it is not covered.';
     }
     return false;
   }
@@ -184,6 +224,7 @@ const KEYS = [
   'logActive',
   'logStatus',
   'logSession',
+  'logCampaign',
   'logShotStatus',
   'logTelegramStatus',
   'scheduleArmed',
@@ -202,10 +243,11 @@ const KEYS = [
 let latest = {};
 
 function refresh() {
-  chrome.storage.local.get(KEYS).then((stored) => {
+  const keys = tabCampaign ? [...KEYS, statusKey(tabCampaign), readingKey(tabCampaign)] : KEYS;
+  chrome.storage.local.get(keys).then((stored) => {
     latest = stored;
     render(stored);
-    renderQueue(stored);
+    renderQueue(queueFields(stored));
     renderLog(stored);
     renderTelegram(stored);
     renderSchedule(stored);
@@ -218,9 +260,10 @@ function refresh() {
 refresh();
 chrome.storage.onChanged.addListener(refresh);
 
-// The buttons act on the tab you are looking at; say which campaign that is.
+// The buttons act on the tab you are looking at. The title stands in until
+// the page answers with its campaign.
 chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
-  if (tab && tab.title) tabEl.textContent = `Buttons act on: ${tab.title}`;
+  if (tab && tab.title && !tabCampaign) tabEl.textContent = `This tab: ${tab.title}`;
 });
 
 // The countdown has to move on its own; storage only changes when armed state does.

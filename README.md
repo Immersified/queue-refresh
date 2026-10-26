@@ -207,10 +207,12 @@ or falls back to the tab title.
 
 | Where | What it shows |
 | --- | --- |
-| Popup, under the buttons | `Buttons act on: Guild Prism V2`, the tab you are looking at |
-| Popup status line | `Guild Signal V2: Attempt 3: queue full.`, the tab that wrote it |
+| Popup, under the buttons | `This tab: Guild Prism V2 · join loop running` |
+| Popup status and queue | That tab's own status and reading, never the other tab's |
+| Popup logging | `Logging Guild Signal V2` |
 | Popup arm | `For Guild Signal V2` |
 | Telegram | `Queue Refresh · Guild Signal V2` at the top of each message |
+| `/status` | One block per open campaign. See [Commands from your phone](#commands-from-your-phone) |
 
 **An arm belongs to the campaign it was set on.** Both tabs check the arm, but
 only that campaign's tab refreshes for estimates and joins. On a browser start,
@@ -295,7 +297,7 @@ Send these to your bot. It answers in the same chat.
 | --- | --- |
 | `/join` | Presses **Start** on the queue tab |
 | `/stop` | Presses **Stop**. An arm is left alone, and the reply says so |
-| `/status` | Position (or queue length), logging, arm, and the latest status line |
+| `/status` | Each open campaign: join loop, last message, queue. `/status prism` for one |
 | `/arm 21:30` | Arms for the next 21:30 on the VPS clock: today, or tomorrow if it has passed |
 | `/help` | Lists the commands. Any unknown command gets this too |
 
@@ -316,15 +318,37 @@ Which campaign?
 ```
 
 Every message is headed with the campaign it is about, e.g.
-`Queue Refresh · Guild Signal V2`. `/status` also lists the open campaigns.
+`Queue Refresh · Guild Signal V2`.
+
+`/status` gives each campaign its own block, so nothing one tab said can be
+read as the other's:
 
 ```
-Queue Refresh
-Position 40 of 456
-Read 1m ago
-Logging
-Not armed
-Joined the queue on attempt 3. Logging now.
+Queue Refresh · status
+
+Guild Signal V2
+Join loop: stopped
+Last (17:13): Stopped: no enabled "Join queue" button after 30s.
+Queue: not joined, 434 waiting (read 16m ago)
+
+Guild Prism V2
+Join loop: running
+Last (17:29): Attempt 2: queue full. Refreshing in 7.2s.
+Queue: not joined, 512 waiting (read 1m ago)
+
+Logging: off
+Armed: no
+```
+
+`Join loop: not started` means that tab has not done anything since it loaded.
+
+**When a join stops without joining**, the phone hears about it, loudly. A
+missing button also lists what was on the page instead:
+
+```
+Queue Refresh · Guild Prism V2
+Stopped: no enabled "Join queue" button after 30s.
+Buttons on the page: Comments
 ```
 
 Things to know:
@@ -333,6 +357,11 @@ Things to know:
   seconds, the shortest Chrome allows.
 - **The queue tab must be open.** Telegram cannot start the browser. With no
   tab, the reply says so.
+- **A tab that does not answer is reloaded once.** A tab left open across an
+  extension reload keeps the old code until it is reloaded. The reply says when
+  this happened.
+- **A folder that was not rebuilt is named as such.** The reply says to run
+  `node build.js`, rather than leaving a tab that cannot answer.
 - **The tab is brought to the front**, as the watchdog does, so its timers run
   at full speed and screenshots work.
 - **Only your `TELEGRAM_CHAT_ID` is obeyed.** Messages from anyone else are

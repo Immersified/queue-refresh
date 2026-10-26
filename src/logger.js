@@ -72,6 +72,15 @@
     if (sample.position !== null || sample.waiting !== null) {
       patch.queueCountAt = sample.at;
     }
+
+    // The fields above are whichever tab read last. Each campaign also keeps
+    // its own reading, but only a real one: a half-rendered page says nothing.
+    const campaignNow = globalThis.__queueRefreshCurrentCampaign;
+    const name = campaignNow && campaignNow();
+    if (name && sample.state !== 'unknown') {
+      const { position, total, waiting, state, at } = sample;
+      patch[globalThis.__queueRefreshCampaign.readingKey(name)] = { position, total, waiting, state, at };
+    }
     chrome.storage.local.set(patch);
   }
 
