@@ -142,3 +142,23 @@ test('status shows the arm and the queue length before joining', () => {
   assert.ok(text.includes('Not in the queue. 568 waiting\nNot logging\nArmed. Ready at 08:00\nJoining at 07:00'));
   assert.ok(formatStatus({}, NOW).includes('No queue reading'));
 });
+
+const { splitArgs } = require('../src/telegram.js');
+
+test('takes the campaign and the time in either order', () => {
+  assert.deepStrictEqual(splitArgs('signal 21:30'), { name: 'signal', time: '21:30' });
+  assert.deepStrictEqual(splitArgs('21:30 signal'), { name: 'signal', time: '21:30' });
+  assert.deepStrictEqual(splitArgs('guild prism'), { name: 'guild prism', time: '' });
+  assert.deepStrictEqual(splitArgs(''), { name: '', time: '' });
+});
+
+test('status says which campaign the status line and the arm belong to', () => {
+  const text = formatStatus({
+    scheduleArmed: true, scheduleCampaign: 'Guild Prism V2',
+    scheduleReadyAt: new Date(2026, 9, 27, 8, 0).getTime(),
+    status: 'Attempt 3: queue full.', statusCampaign: 'Guild Signal V2'
+  }, NOW, ['Guild Signal V2', 'Guild Prism V2']);
+  assert.ok(text.startsWith('Queue Refresh\nOpen: Guild Signal V2, Guild Prism V2\n'));
+  assert.ok(text.includes('Armed for Guild Prism V2. Ready at 08:00'));
+  assert.ok(text.endsWith('Guild Signal V2: Attempt 3: queue full.'));
+});

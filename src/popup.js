@@ -1,4 +1,5 @@
 const statusEl = document.getElementById('status');
+const tabEl = document.getElementById('tab');
 const queueEl = document.getElementById('queue');
 const logEl = document.getElementById('log');
 const shotsEl = document.getElementById('shots');
@@ -10,8 +11,10 @@ const hintEl = document.querySelector('#launch .hint');
 const challengeEl = document.getElementById('challenge');
 const { formatCountdown, nextCheckAt } = globalThis.__queueRefreshSchedule;
 
-function render(text) {
-  statusEl.textContent = text || 'Idle.';
+// The status line is shared by every tab, so it says whose it is.
+function render({ status, statusCampaign }) {
+  const text = status || 'Idle.';
+  statusEl.textContent = statusCampaign && status ? `${statusCampaign}: ${text}` : text;
 }
 
 function describeAge(ms) {
@@ -96,6 +99,7 @@ function renderSchedule(stored) {
 
   const now = Date.now();
   const lines = [`Ready at ${new Date(scheduleReadyAt).toLocaleString()}`];
+  if (stored.scheduleCampaign) lines.push(`For ${stored.scheduleCampaign}`);
   if (scheduleJoinAt) {
     lines.push(`Joining in ${formatCountdown(scheduleJoinAt - now)} ` +
       `(${new Date(scheduleJoinAt).toLocaleTimeString()})`);
@@ -141,7 +145,7 @@ async function send(type, extra = {}, { quiet = false } = {}) {
   } catch (e) {
     // Only a button press earns an error; the reading on open stays silent.
     if (!quiet) {
-      render('This page is not covered by the extension. Check "matches" in manifest.json.');
+      render({ status: 'This page is not covered by the extension. Check "matches" in manifest.json.' });
     }
     return false;
   }
@@ -170,6 +174,8 @@ autoStartEl.addEventListener('change', () => {
 
 const KEYS = [
   'status',
+  'statusCampaign',
+  'scheduleCampaign',
   'queueCount',
   'queueCountAt',
   'queuePosition',
@@ -198,7 +204,7 @@ let latest = {};
 function refresh() {
   chrome.storage.local.get(KEYS).then((stored) => {
     latest = stored;
-    render(stored.status);
+    render(stored);
     renderQueue(stored);
     renderLog(stored);
     renderTelegram(stored);
@@ -211,6 +217,11 @@ function refresh() {
 
 refresh();
 chrome.storage.onChanged.addListener(refresh);
+
+// The buttons act on the tab you are looking at; say which campaign that is.
+chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+  if (tab && tab.title) tabEl.textContent = `Buttons act on: ${tab.title}`;
+});
 
 // The countdown has to move on its own; storage only changes when armed state does.
 setInterval(() => renderSchedule(latest), 1000);

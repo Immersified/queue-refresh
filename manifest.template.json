@@ -44,6 +44,7 @@
         "src/queue-estimate.js",
         "src/challenge.js",
         "src/blank.js",
+        "src/campaign.js",
         "src/schedule.js",
         "src/logger.js",
         "src/controller.js"

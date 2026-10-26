@@ -16,7 +16,8 @@ importScripts(
   '/src/config.js',
   '/src/telegram.js',
   '/src/watchdog.js',
-  '/src/schedule.js'
+  '/src/schedule.js',
+  '/src/campaign.js'
 );
 
 const { toCsv, sessionFolder } = globalThis.__queueRefreshCsv;
@@ -25,11 +26,13 @@ const {
   formatCheck,
   parseCommand,
   armValue,
+  splitArgs,
   formatStatus,
   HELP
 } = globalThis.__queueRefreshTelegram;
 const { shouldRevive } = globalThis.__queueRefreshWatchdog;
 const { launchDue } = globalThis.__queueRefreshSchedule;
+const { pickTabs, shortName } = globalThis.__queueRefreshCampaign;
 
 // null when .env carries no token, which is how Telegram stays optional.
 const TELEGRAM = (globalThis.QUEUE_REFRESH_CONFIG || {}).telegram || null;
@@ -61,7 +64,7 @@ function setShotStatus(text) {
   return chrome.storage.local.set({ logShotStatus: text });
 }
 
-async function startSession(url) {
+async function startSession(url, campaign) {
   const folder = sessionFolder(url, new Date());
   await chrome.storage.local.set({
     logActive: true,
@@ -76,7 +79,7 @@ async function startSession(url) {
   });
   await setStatus(`Logging to ${ROOT}/${folder}/`);
   // Worth a buzz: it means the join landed.
-  await notify(`Queue Refresh\nIn the queue. Logging to ${folder}`, { silent: false });
+  await notify(`Queue Refresh\nIn the queue. Logging to ${folder}`, { silent: false, campaign });
   return folder;
 }
 
@@ -89,7 +92,7 @@ async function writeCsv() {
   await save(toDataUrl(toCsv(logRows), 'text/csv'), `${ROOT}/${logSession}/log.csv`);
 }
 
-async function addSample(sample) {
+async function addSample(sample, campaign) {
   const store = await chrome.storage.local.get([
     'logRows',
     'logSession',
@@ -110,7 +113,7 @@ async function addSample(sample) {
 
   await chrome.storage.local.set({ logRows: rows });
   await writeCsv();
-  await maybeNotify(sample, store.logStartedAt);
+  await maybeNotify(sample, store.logStartedAt, campaign);
 
   const where = sample.position !== null ? `position ${sample.position}` : sample.state;
   await setStatus(`${rows.length} rows logged, latest: ${where}.`);
@@ -183,7 +186,7 @@ const ENDINGS = {
   'not-in-queue': 'No longer in the queue.'
 };
 
-async function stopSession(reason) {
+async function stopSession(reason, campaign) {
   await writeCsv();
   const { logRows = [], logSession } = await chrome.storage.local.get([
     'logRows',
@@ -195,7 +198,7 @@ async function stopSession(reason) {
   await setStatus(`${why} ${logRows.length} rows in ${ROOT}/${logSession}/`);
   await notify(
     `Queue Refresh\n${why}\nLogging stopped, ${logRows.length} rows saved.`,
-    { silent: false }
+    { silent: false, campaign }
   );
 }
 
@@ -207,9 +210,12 @@ async function stopSession(reason) {
  *
  * @param {boolean} silent routine position updates arrive without a buzz;
  *   joining, stopping and failing are worth waking the phone for.
+ * @param {string} campaign goes in the heading, so with two campaigns open
+ *   every message says which one it is about.
  */
-async function notify(text, { silent = true } = {}) {
+async function notify(text, { silent = true, campaign = null } = {}) {
   if (!TELEGRAM) return;
+  if (campaign) text = text.replace(/^Queue Refresh/, `Queue Refresh · ${campaign}`);
 
   try {
     const response = await fetch(
@@ -237,7 +243,7 @@ async function notify(text, { silent = true } = {}) {
 }
 
 /** Rides the CSV tick, but on its own interval so the phone is not spammed. */
-async function maybeNotify(sample, startedAt) {
+async function maybeNotify(sample, startedAt, campaign) {
   if (!TELEGRAM) return;
 
   const store = await chrome.storage.local.get(['telegramAt', 'telegramPosition']);
@@ -248,56 +254,99 @@ async function maybeNotify(sample, startedAt) {
     telegramAt: Date.now(),
     telegramPosition: sample.position
   });
-  await notify(formatUpdate(sample, store.telegramPosition ?? null, Date.now() - startedAt));
+  await notify(formatUpdate(sample, store.telegramPosition ?? null, Date.now() - startedAt), {
+    campaign
+  });
 }
 
 // ------------------------------------------------------- telegram commands
 
 const COMMAND_POLL = 'queue-refresh:telegram-commands';
 
-const loud = (text) => notify(`Queue Refresh\n${text}`, { silent: false });
+const loud = (text, campaign = null) =>
+  notify(`Queue Refresh\n${text}`, { silent: false, campaign });
+
+const NO_TAB = 'No queue tab is open, or the page is not answering. Open it in the browser first.';
 
 /**
- * The same thing as pressing a popup button, on the queue tab rather than the
+ * The one tab a command means. With one campaign open no name is needed; with
+ * two, a command without one is answered with the choices rather than guessed.
+ *
+ * @param {string} example how the command goes, for the "which one?" reply
+ * @returns {Promise<{tab: object}|{reply: string}>}
+ */
+async function chooseTab(name, example) {
+  const tabs = await chrome.tabs.query({ url: siteMatches() });
+  if (!tabs.length) return { reply: NO_TAB };
+
+  const picked = pickTabs(tabs, name);
+  const titles = (list) => list.map((tab) => tab.title);
+
+  if (!picked.length) {
+    return { reply: `No open campaign matches "${name}". Open: ${titles(tabs).join(', ')}` };
+  }
+  if (picked.length > 1) {
+    const choices = picked.map((tab) => {
+      const others = titles(picked).filter((title) => title !== tab.title);
+      return `/${example.replace('NAME', shortName(tab.title, others))}`;
+    });
+    return { reply: `Which campaign?\n${choices.join('\n')}` };
+  }
+  return { tab: picked[0] };
+}
+
+/**
+ * The same thing as pressing a popup button, on that tab rather than the
  * active one. Brought to the front first: a background tab has its timers
  * throttled and cannot be screenshotted.
  *
- * @returns {Promise<object|null>} the page's answer, null when there is no tab
+ * @returns {Promise<object|null>} the page's answer, null when it did not answer
  */
-async function pressOnQueueTab(type, extra = {}) {
-  const [tab] = await chrome.tabs.query({ url: siteMatches() });
-  if (!tab) return null;
-
+async function pressOnTab(tab, type, extra = {}) {
   await chrome.windows.update(tab.windowId, { focused: true }).catch(() => null);
   await chrome.tabs.update(tab.id, { active: true });
   return chrome.tabs.sendMessage(tab.id, { type, ...extra }).catch(() => null);
 }
 
-const NO_TAB = 'No queue tab is open, or the page is not answering. Open it in the browser first.';
-
 async function runCommand({ command, arg }) {
+  const { name, time } = splitArgs(arg);
+
   if (command === 'join') {
-    const answer = await pressOnQueueTab('start');
-    return loud(answer ? 'Joining. Pressed Start on the queue tab.' : NO_TAB);
+    const choice = await chooseTab(name, 'join NAME');
+    if (!choice.tab) return loud(choice.reply);
+    const answer = await pressOnTab(choice.tab, 'start');
+    return loud(answer ? 'Joining. Pressed Start.' : NO_TAB, choice.tab.title);
   }
 
   if (command === 'stop') {
-    const answer = await pressOnQueueTab('stop');
-    if (!answer) return loud(NO_TAB);
+    const choice = await chooseTab(name, 'stop NAME');
+    if (!choice.tab) return loud(choice.reply);
+    const answer = await pressOnTab(choice.tab, 'stop');
+    if (!answer) return loud(NO_TAB, choice.tab.title);
     // Stop leaves an arm alone, as the popup's Stop does. Say so, or a stop
     // sent at night reads as the end of everything.
-    const { scheduleArmed } = await chrome.storage.local.get('scheduleArmed');
-    return loud(scheduleArmed ? 'Stopped. Still armed: disarm in the popup.' : 'Stopped.');
+    const { scheduleArmed, scheduleCampaign } = await chrome.storage.local.get([
+      'scheduleArmed',
+      'scheduleCampaign'
+    ]);
+    const armed = scheduleCampaign ? `Still armed for ${scheduleCampaign}` : 'Still armed';
+    return loud(
+      scheduleArmed ? `Stopped. ${armed}: disarm in the popup.` : 'Stopped.',
+      choice.tab.title
+    );
   }
 
   if (command === 'arm') {
-    const value = armValue(arg, Date.now());
+    const value = armValue(time, Date.now());
     if (!value) return loud('Send the ready time as /arm 21:30');
-    const answer = await pressOnQueueTab('arm', { value });
-    return loud(answer ? answer.schedule || 'Armed.' : NO_TAB);
+    const choice = await chooseTab(name, `arm NAME ${time}`);
+    if (!choice.tab) return loud(choice.reply);
+    const answer = await pressOnTab(choice.tab, 'arm', { value });
+    return loud(answer ? answer.schedule || 'Armed.' : NO_TAB, choice.tab.title);
   }
 
   if (command === 'status') {
+    const tabs = await chrome.tabs.query({ url: siteMatches() });
     const store = await chrome.storage.local.get([
       'status',
       'queueState',
@@ -308,9 +357,12 @@ async function runCommand({ command, arg }) {
       'logActive',
       'scheduleArmed',
       'scheduleReadyAt',
-      'scheduleJoinAt'
+      'scheduleJoinAt',
+      'scheduleCampaign',
+      'statusCampaign'
     ]);
-    return notify(formatStatus(store, Date.now()), { silent: false });
+    const open = tabs.map((tab) => tab.title);
+    return notify(formatStatus(store, Date.now(), open), { silent: false });
   }
 
   return notify(HELP, { silent: false });
@@ -368,7 +420,10 @@ const siteMatches = () => chrome.runtime.getManifest().content_scripts[0].matche
  * visible tab, and a background tab has its timers throttled to once a minute.
  */
 async function revive(reason, { allowCreate = true } = {}) {
-  const { lastSeenUrl } = await chrome.storage.local.get('lastSeenUrl');
+  const { lastSeenUrl, scheduleCampaign } = await chrome.storage.local.get([
+    'lastSeenUrl',
+    'scheduleCampaign'
+  ]);
   const tabs = await chrome.tabs.query({ url: siteMatches() });
 
   if (!tabs.length) {
@@ -391,7 +446,8 @@ async function revive(reason, { allowCreate = true } = {}) {
   // spend the cooldown that the next real attempt needs.
   await chrome.storage.local.set({ watchdogRevivedAt: Date.now() });
 
-  const [tab] = tabs;
+  // With two campaigns open, the armed one is the tab that has to be awake.
+  const [tab] = [...pickTabs(tabs, scheduleCampaign), ...tabs];
   await chrome.windows.update(tab.windowId, { focused: true }).catch(() => null);
   await chrome.tabs.update(tab.id, { active: true });
   await chrome.tabs.reload(tab.id);
@@ -478,14 +534,14 @@ chrome.runtime.onStartup.addListener(startOnLaunch);
  * The page is behind a Cloudflare interstitial. Nothing here can clear it, so
  * the only useful thing is to say so loudly enough to wake somebody.
  */
-async function reportChallenge(tabId, signal) {
+async function reportChallenge(tabId, signal, campaign) {
   const because = signal ? `\nSpotted by ${signal}.` : '';
   await chrome.storage.local.set({ challengeAt: Date.now(), challengeSignal: signal ?? null });
   await setStatus('Cloudflare is asking for verification. Stopped until it is cleared.');
   await notify(
     'Queue Refresh\nCloudflare is asking you to verify.\n' +
       `The run is stopped until you clear it by hand.${because}`,
-    { silent: false }
+    { silent: false, campaign }
   );
 
   // Worth trying even though it only lands when a session is already running:
@@ -499,13 +555,13 @@ async function reportChallenge(tabId, signal) {
  * that is no longer true is worse than none: it is the one you learn to
  * ignore. Quietly -- the loud message has already been sent.
  */
-async function clearChallenge() {
+async function clearChallenge(campaign) {
   const { challengeAt } = await chrome.storage.local.get('challengeAt');
   if (!challengeAt) return;
 
   await chrome.storage.local.set({ challengeAt: null, challengeSignal: null });
   await setStatus('Cloudflare cleared itself. The page is back.');
-  await notify('Queue Refresh\nCloudflare cleared itself. Carrying on.');
+  await notify('Queue Refresh\nCloudflare cleared itself. Carrying on.', { campaign });
 }
 
 // ------------------------------------------------------------------ schedule
@@ -543,18 +599,21 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const done = (value) => sendResponse(value ?? null);
+  // The controller names its campaign; the logger does not, but its page is
+  // the campaign page, so the tab title says the same thing.
+  const campaign = message.campaign || (sender.tab && sender.tab.title) || null;
 
-  if (message.type === 'log-start') startSession(message.url).then(done);
-  else if (message.type === 'log-sample') addSample(message.sample).then(done);
+  if (message.type === 'log-start') startSession(message.url, campaign).then(done);
+  else if (message.type === 'log-sample') addSample(message.sample, campaign).then(done);
   else if (message.type === 'log-shot') takeShot(sender.tab.id).then(done);
   else if (message.type === 'test-shot') {
     takeShot(sender.tab.id, { scheduled: false }).then(done);
   }
-  else if (message.type === 'log-stop') stopSession(message.reason).then(done);
+  else if (message.type === 'log-stop') stopSession(message.reason, campaign).then(done);
   else if (message.type === 'challenge') {
-    reportChallenge(sender.tab && sender.tab.id, message.signal).then(done);
+    reportChallenge(sender.tab && sender.tab.id, message.signal, campaign).then(done);
   }
-  else if (message.type === 'challenge-cleared') clearChallenge().then(done);
+  else if (message.type === 'challenge-cleared') clearChallenge(campaign).then(done);
   else if (message.type === 'schedule-set') {
     chrome.alarms.create(ALARM, { when: message.at });
     done();
@@ -564,9 +623,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Every refresh reaches the phone. Silent while there is a join time to
     // wait for; loud when it joins now or will not join at all.
     const silent = message.check.action === 'wait';
-    notify(formatCheck(message.check), { silent }).then(done);
+    notify(formatCheck(message.check), { silent, campaign }).then(done);
   } else if (message.type === 'notify') {
-    notify(message.text, { silent: message.silent }).then(done);
+    notify(message.text, { silent: message.silent, campaign }).then(done);
   }
   else return false;
 

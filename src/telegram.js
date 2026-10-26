@@ -98,7 +98,8 @@
     '/join - press Start on the queue tab',
     '/stop - press Stop',
     '/status - where things stand',
-    '/arm 21:30 - set the ready time'
+    '/arm 21:30 - set the ready time',
+    'With two campaigns open, add which one: /join prism, /arm signal 21:30'
   ].join('\n');
 
   /**
@@ -123,6 +124,21 @@
     return { command: COMMANDS.includes(command) ? command : 'help', arg: (match[2] || '').trim() };
   }
 
+  const TIME = /^(\d{1,2})[:.](\d{2})$/;
+
+  /**
+   * "signal 21:30" or "21:30 signal" -> the campaign and the time, in either
+   * order, because nobody remembers which way round it goes.
+   *
+   * @returns {{name: string, time: string}}
+   */
+  function splitArgs(arg) {
+    const words = String(arg || '').trim().split(/\s+/).filter(Boolean);
+    const time = words.find((word) => TIME.test(word)) || '';
+    const name = words.filter((word) => word !== time).join(' ');
+    return { name, time };
+  }
+
   /**
    * "21:30" -> the next 21:30 on this machine's clock, in the form the popup's
    * picker produces, so the arm reads it exactly as it reads the picker.
@@ -130,7 +146,7 @@
    * @returns {string|null} null when the text is not a time.
    */
   function armValue(text, now) {
-    const match = /^(\d{1,2})[:.](\d{2})$/.exec(String(text).trim());
+    const match = TIME.exec(String(text).trim());
     if (!match) return null;
 
     const hours = Number(match[1]);
@@ -148,9 +164,14 @@
       `T${pad(date.getHours())}:${pad(date.getMinutes())}`;
   }
 
-  /** The reply to /status, built from what the popup also reads. */
-  function formatStatus(store, now) {
+  /**
+   * The reply to /status, built from what the popup also reads.
+   *
+   * @param {string[]} open the campaigns with a tab open right now
+   */
+  function formatStatus(store, now, open = []) {
     const lines = ['Queue Refresh'];
+    if (open.length) lines.push(`Open: ${open.join(', ')}`);
 
     if (store.queueState === 'in-queue' && typeof store.queuePosition === 'number') {
       lines.push(`Position ${store.queuePosition} of ${store.queueTotal}`);
@@ -164,13 +185,17 @@
     lines.push(store.logActive ? 'Logging' : 'Not logging');
 
     if (store.scheduleArmed && store.scheduleReadyAt) {
-      lines.push(`Armed. Ready at ${formatClock(store.scheduleReadyAt)}`);
+      const which = store.scheduleCampaign ? ` for ${store.scheduleCampaign}` : '';
+      lines.push(`Armed${which}. Ready at ${formatClock(store.scheduleReadyAt)}`);
       if (store.scheduleJoinAt) lines.push(`Joining at ${formatClock(store.scheduleJoinAt)}`);
     } else {
       lines.push('Not armed');
     }
 
-    if (store.status) lines.push(store.status);
+    // Shared by every tab, so it says whose it is.
+    if (store.status) {
+      lines.push(store.statusCampaign ? `${store.statusCampaign}: ${store.status}` : store.status);
+    }
     return lines.join('\n');
   }
 
@@ -180,6 +205,7 @@
     formatCheck,
     parseCommand,
     armValue,
+    splitArgs,
     formatStatus,
     HELP,
     MAX_COMMAND_AGE_MS

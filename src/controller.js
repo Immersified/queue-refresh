@@ -17,6 +17,9 @@
   // when Cloudflare goes away, and one you asked for cannot.
   const KEY_HALTED_BY = 'queueRefresh.haltedBy';
   const KEY_RESUMES = 'queueRefresh.challengeResumes';
+  // Remembered per tab, so a Cloudflare page or a half-rendered one still
+  // knows which campaign it belongs to.
+  const KEY_CAMPAIGN = 'queueRefresh.campaign';
 
   const logger = globalThis.__queueRefreshLogger;
   const schedule = globalThis.__queueRefreshSchedule;
@@ -30,6 +33,10 @@
   }
   if (!blank) {
     throw new Error('[Queue Refresh] src/blank.js is not loaded. Run: node build.js');
+  }
+  const campaigns = globalThis.__queueRefreshCampaign;
+  if (!campaigns) {
+    throw new Error('[Queue Refresh] src/campaign.js is not loaded. Run: node build.js');
   }
   const readEstimate = globalThis.__queueRefreshReadEstimate;
   if (!readEstimate) {
@@ -63,9 +70,19 @@
 
   const isActive = () => sessionStorage.getItem(KEY_ACTIVE) === '1';
 
+  const pageText = () => (document.body ? document.body.innerText : '');
+
+  /** "Guild Signal V2": which of the open campaigns this tab is. */
+  function campaign() {
+    const fromQueueLine = campaigns.readCampaign(pageText(), null);
+    if (fromQueueLine) sessionStorage.setItem(KEY_CAMPAIGN, fromQueueLine);
+    return sessionStorage.getItem(KEY_CAMPAIGN) || campaigns.readCampaign('', document.title);
+  }
+
+  // The status line is shared by every tab, so it says whose it is.
   function setStatus(text) {
     console.log('[Queue Refresh]', text);
-    chrome.storage.local.set({ status: text, updatedAt: Date.now() });
+    chrome.storage.local.set({ status: text, statusCampaign: campaign(), updatedAt: Date.now() });
   }
 
   function stop(text) {
@@ -86,8 +103,6 @@
   }
 
   const findJoinButton = () => findButton(BUTTON_LABEL);
-
-  const pageText = () => (document.body ? document.body.innerText : '');
 
   /**
    * Two signals, either of which is enough: the "Position N of M" line, and a
@@ -279,7 +294,7 @@
     sessionStorage.setItem(KEY_ACTIVE, '0');
     sessionStorage.setItem(KEY_HALTED_BY, 'challenge');
     setStatus(`Cloudflare is asking for verification, going by ${signal}. Stopped; clear it by hand.`);
-    chrome.runtime.sendMessage({ type: 'challenge', signal }).catch(() => null);
+    chrome.runtime.sendMessage({ type: 'challenge', signal, campaign: campaign() }).catch(() => null);
   }
 
   /** @returns {Promise<boolean>} true when the page is blocked and we stopped. */
@@ -381,7 +396,30 @@
     chrome.storage.local.set({ scheduleStatus: text });
   }
 
-  const tellWorker = (message) => chrome.runtime.sendMessage(message).catch(() => null);
+  // Labelled, so the phone can say which campaign a message is about.
+  const tellWorker = (message) =>
+    chrome.runtime.sendMessage({ campaign: campaign(), ...message }).catch(() => null);
+
+  /**
+   * An arm belongs to the campaign it was set on. Every tab on the site ticks,
+   * so without this the first tab to notice would join, whichever it was. An
+   * arm from before campaigns were recorded has none and belongs to any tab.
+   */
+  const isMine = (armedFor) => !armedFor || campaign() === armedFor;
+
+  // A fresh load has not rendered the queue line yet; give it the time an
+  // estimate gets before deciding the arm is someone else's.
+  function waitUntilMine(armedFor) {
+    return new Promise((resolve) => {
+      const deadline = Date.now() + ESTIMATE_TIMEOUT_MS;
+      const poll = () => {
+        if (isMine(armedFor)) return resolve(true);
+        if (Date.now() >= deadline) return resolve(false);
+        setTimeout(poll, ESTIMATE_POLL_MS);
+      };
+      poll();
+    });
+  }
 
   async function clearArm(text) {
     await chrome.storage.local.set({
@@ -439,9 +477,12 @@
       'scheduleArmed',
       'scheduleReadyAt',
       'scheduleJoinAt',
-      'scheduleLastCheckAt'
+      'scheduleLastCheckAt',
+      'scheduleCampaign'
     ]);
     if (!store.scheduleArmed || !store.scheduleReadyAt) return stopScheduleTick();
+    // Not stopped: a page still rendering may turn out to be the one.
+    if (!isMine(store.scheduleCampaign)) return;
 
     const now = Date.now();
     if (store.scheduleJoinAt && now >= store.scheduleJoinAt) return fireSchedule();
@@ -488,9 +529,15 @@
    * and tell the phone either way.
    */
   async function runCheck() {
-    const { scheduleArmed, scheduleCheckPending, scheduleReadyAt } =
-      await chrome.storage.local.get(['scheduleArmed', 'scheduleCheckPending', 'scheduleReadyAt']);
+    const { scheduleArmed, scheduleCheckPending, scheduleReadyAt, scheduleCampaign } =
+      await chrome.storage.local.get([
+        'scheduleArmed',
+        'scheduleCheckPending',
+        'scheduleReadyAt',
+        'scheduleCampaign'
+      ]);
     if (!scheduleArmed || !scheduleCheckPending) return;
+    if (!(await waitUntilMine(scheduleCampaign))) return;
 
     // Claimed first, so a second tab on the site cannot run the same check.
     await chrome.storage.local.set({ scheduleCheckPending: false });
@@ -571,13 +618,14 @@
       scheduleLastCheckAt: null,
       scheduleCheckPending: false,
       scheduleEstimate: null,
-      scheduleInput: value
+      scheduleInput: value,
+      scheduleCampaign: campaign()
     });
 
     const firstCheck = schedule.nextCheckAt({ readyAt, lastCheckAt: null });
     await tellWorker({ type: 'schedule-set', at: Math.max(firstCheck, Date.now()) });
     setScheduleStatus(
-      `Armed. Ready at ${new Date(readyAt).toLocaleString()}. ` +
+      `Armed for ${campaign()}. Ready at ${new Date(readyAt).toLocaleString()}. ` +
         `Checking the estimate from ${new Date(firstCheck).toLocaleTimeString()}.`
     );
     startScheduleTick();

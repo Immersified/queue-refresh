@@ -200,6 +200,24 @@ line of the CSV is the one that says what happened.
 
 Press **Stop** to end it by hand at any point.
 
+## Two campaigns at once
+
+Each tab knows its campaign. It reads the `Task queue · Guild Signal V2` line,
+or falls back to the tab title.
+
+| Where | What it shows |
+| --- | --- |
+| Popup, under the buttons | `Buttons act on: Guild Prism V2`, the tab you are looking at |
+| Popup status line | `Guild Signal V2: Attempt 3: queue full.`, the tab that wrote it |
+| Popup arm | `For Guild Signal V2` |
+| Telegram | `Queue Refresh · Guild Signal V2` at the top of each message |
+
+**An arm belongs to the campaign it was set on.** Both tabs check the arm, but
+only that campaign's tab refreshes for estimates and joins. On a browser start,
+that tab is the one woken.
+
+**Logging is shared.** One session at a time, whichever tab started it.
+
 ## Telegram
 
 Optional. With a token in `.env`, the position is pushed to your phone on the
@@ -280,6 +298,25 @@ Send these to your bot. It answers in the same chat.
 | `/status` | Position (or queue length), logging, arm, and the latest status line |
 | `/arm 21:30` | Arms for the next 21:30 on the VPS clock: today, or tomorrow if it has passed |
 | `/help` | Lists the commands. Any unknown command gets this too |
+
+**Two campaigns open?** Add which one. Any part of the name works, in any case:
+
+```
+/join prism
+/arm signal 21:30
+/stop signal
+```
+
+Leave the name out and the bot asks rather than guessing:
+
+```
+Which campaign?
+/join signal
+/join prism
+```
+
+Every message is headed with the campaign it is about, e.g.
+`Queue Refresh · Guild Signal V2`. `/status` also lists the open campaigns.
 
 ```
 Queue Refresh
@@ -824,6 +861,7 @@ stable handle, so no manual setup is needed.
 | `src/schedule.js` | Reads the picked time, plans the join time, counts down |
 | `src/queue-estimate.js` | Reads the "Estimated 60–120 min to front" line off the page |
 | `src/telegram.js` | Builds the text that goes to your phone, and reads the commands that come back |
+| `src/campaign.js` | Reads which campaign a page is, and picks a tab by name |
 | `src/watchdog.js` | Decides when a silent page needs reloading |
 | `check-telegram.js` | Sends one test message to prove the bot works |
 | `windows/start-edge.bat` | Launches Edge with the flags that survive a disconnect |
