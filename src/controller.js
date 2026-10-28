@@ -236,7 +236,7 @@
     if (status === 'full' || status === 'limit' || status === 'backoff') {
       // The site saying it has had enough retries earns a longer pause.
       const wait = status === 'backoff' ? 2 * nextRetryDelay() : nextRetryDelay();
-      const why = { full: 'queue full', limit: 'one-task limit', backoff: 'max retries exceeded' }[status];
+      const why = { full: 'queue full', limit: 'one-task limit', backoff: 'too many requests' }[status];
       setStatus(`Attempt ${attempt}: ${why}. Refreshing in ${(wait / 1000).toFixed(1)}s.`);
       setTimeout(() => {
         if (isActive()) location.reload();

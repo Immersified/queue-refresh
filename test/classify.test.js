@@ -62,6 +62,15 @@ test('backs off on max retries exceeded', () => {
   });
 });
 
+test('backs off on too many requests', () => {
+  const body = JSON.stringify({
+    errors: [
+      { message: 'Too many requests. Please try again later.', path: ['joinTaskQueue'] }
+    ]
+  });
+  assert.strictEqual(classifyJoinResponse(body).status, 'backoff');
+});
+
 test('reports a successful join', () => {
   const body = JSON.stringify({ data: { joinTaskQueue: { id: 'abc' } } });
   assert.deepStrictEqual(classifyJoinResponse(body), { status: 'joined' });
