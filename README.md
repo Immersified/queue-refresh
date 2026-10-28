@@ -10,7 +10,8 @@ No third-party tools. Chrome loads it directly.
 1. Waits `CLICK_DELAY_SECONDS` for the page to settle.
 2. Finds the button whose text is exactly `Join queue` and clicks it.
 3. Watches the GraphQL response for the `joinTaskQueue` operation.
-4. Queue full -> waits a random 5 to 10 seconds, reloads, clicks again.
+4. Queue full, or "One task per trainer" -> waits a random 5 to 10 seconds,
+   reloads, clicks again. Both still count toward `MAX_ATTEMPTS`.
 5. Page came back blank -> waits the same random 5 to 10 seconds and reloads,
    the way pressing F5 would. See [When the page comes back
    blank](#when-the-page-comes-back-blank).

@@ -233,9 +233,10 @@
     setStatus(`Attempt ${attempt}: clicked, waiting for the server.`);
     const { status, message } = await result;
 
-    if (status === 'full') {
+    if (status === 'full' || status === 'limit') {
       const wait = nextRetryDelay();
-      setStatus(`Attempt ${attempt}: queue full. Refreshing in ${(wait / 1000).toFixed(1)}s.`);
+      const why = status === 'full' ? 'queue full' : 'one-task limit';
+      setStatus(`Attempt ${attempt}: ${why}. Refreshing in ${(wait / 1000).toFixed(1)}s.`);
       setTimeout(() => {
         if (isActive()) location.reload();
       }, wait);

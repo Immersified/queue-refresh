@@ -35,6 +35,23 @@ test('falls back to the message when the exception code is missing', () => {
   assert.strictEqual(classifyJoinResponse(body).status, 'full');
 });
 
+test('treats the one-task-per-trainer limit as retryable', () => {
+  const body = JSON.stringify({
+    data: null,
+    errors: [
+      {
+        message: 'Exceeded contribution limits: One task per trainer',
+        path: ['joinTaskQueue'],
+        extensions: { service_exception_code: 'FAILED_PRECONDITION' }
+      }
+    ]
+  });
+  assert.deepStrictEqual(classifyJoinResponse(body), {
+    status: 'limit',
+    message: 'Exceeded contribution limits: One task per trainer'
+  });
+});
+
 test('reports a successful join', () => {
   const body = JSON.stringify({ data: { joinTaskQueue: { id: 'abc' } } });
   assert.deepStrictEqual(classifyJoinResponse(body), { status: 'joined' });

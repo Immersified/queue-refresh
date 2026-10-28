@@ -6,6 +6,9 @@
   const OPERATION = 'joinTaskQueue';
   const FULL_CODE = 'RESOURCE_EXHAUSTED';
   const FULL_MESSAGE = /queue is full/i;
+  // "Exceeded contribution limits: One task per trainer". Shown even when the
+  // join would go through on a later try, so it is retried like a full queue.
+  const LIMIT_MESSAGE = /contribution limits|one task per/i;
 
   function ownErrors(body) {
     if (!Array.isArray(body.errors)) return [];
@@ -25,9 +28,11 @@
     return code === FULL_CODE || FULL_MESSAGE.test(error.message || '');
   }
 
+  const isTaskLimit = (error) => LIMIT_MESSAGE.test(error.message || '');
+
   /**
    * @param {string} text raw response body
-   * @returns {{status: 'full'|'joined'|'error', message?: string} | null}
+   * @returns {{status: 'full'|'limit'|'joined'|'error', message?: string} | null}
    *          null when the response has nothing to do with joining the queue.
    */
   function classifyJoinResponse(text) {
@@ -48,6 +53,9 @@
 
     const full = errors.find(isQueueFull);
     if (full) return { status: 'full', message: full.message };
+
+    const limit = errors.find(isTaskLimit);
+    if (limit) return { status: 'limit', message: limit.message };
 
     return { status: 'error', message: errors[0].message };
   }
