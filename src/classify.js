@@ -9,6 +9,8 @@
   // "Exceeded contribution limits: One task per trainer". Shown even when the
   // join would go through on a later try, so it is retried like a full queue.
   const LIMIT_MESSAGE = /contribution limits|one task per/i;
+  // The site's own retry cap. Worth another try, but after a longer wait.
+  const BACKOFF_MESSAGE = /max(imum)?\s+retries\s+exceeded/i;
 
   function ownErrors(body) {
     if (!Array.isArray(body.errors)) return [];
@@ -29,10 +31,11 @@
   }
 
   const isTaskLimit = (error) => LIMIT_MESSAGE.test(error.message || '');
+  const isBackoff = (error) => BACKOFF_MESSAGE.test(error.message || '');
 
   /**
    * @param {string} text raw response body
-   * @returns {{status: 'full'|'limit'|'joined'|'error', message?: string} | null}
+   * @returns {{status: 'full'|'limit'|'backoff'|'joined'|'error', message?: string} | null}
    *          null when the response has nothing to do with joining the queue.
    */
   function classifyJoinResponse(text) {
@@ -56,6 +59,9 @@
 
     const limit = errors.find(isTaskLimit);
     if (limit) return { status: 'limit', message: limit.message };
+
+    const backoff = errors.find(isBackoff);
+    if (backoff) return { status: 'backoff', message: backoff.message };
 
     return { status: 'error', message: errors[0].message };
   }

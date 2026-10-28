@@ -52,6 +52,16 @@ test('treats the one-task-per-trainer limit as retryable', () => {
   });
 });
 
+test('backs off on max retries exceeded', () => {
+  const body = JSON.stringify({
+    errors: [{ message: 'Max retries exceeded. Try again later.', path: ['joinTaskQueue'] }]
+  });
+  assert.deepStrictEqual(classifyJoinResponse(body), {
+    status: 'backoff',
+    message: 'Max retries exceeded. Try again later.'
+  });
+});
+
 test('reports a successful join', () => {
   const body = JSON.stringify({ data: { joinTaskQueue: { id: 'abc' } } });
   assert.deepStrictEqual(classifyJoinResponse(body), { status: 'joined' });
